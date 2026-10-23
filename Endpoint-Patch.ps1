@@ -542,6 +542,38 @@ function Update-Ovh($exe) {
   return 'FAILED: file in use; old version restored.'
 }
 
+function Get-FirefoxExe {
+  foreach ($p in "$env:ProgramFiles\Mozilla Firefox\firefox.exe", "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe") { if (Test-Path $p) { return $p } }
+  return $null
+}
+# Mozilla's own installer first (always the newest release; winget's catalog can lag behind),
+# signature checked, installed into the same folder, then the version is checked again.
+function Update-Firefox($chan, $req) {
+  $exe = Get-FirefoxExe
+  $prod = 'firefox-latest-ssl'; if ($chan -eq 'esr') { $prod = 'firefox-esr-latest-ssl' }; if ($chan -eq 'esr115') { $prod = 'firefox-esr115-latest-ssl' }
+  $osTag = 'win'; if ($is64) { $osTag = 'win64' }
+  $f = Download "https://download.mozilla.org/?product=$prod&os=$osTag&lang=en-US" 'firefox-setup.exe'
+  if ($f) {
+    $sig = Get-AuthenticodeSignature $f
+    if ("$($sig.Status)" -ne 'Valid' -or "$($sig.SignerCertificate.Subject)" -notmatch 'Mozilla Corporation') {
+      Log "Firefox installer signature not valid ($($sig.Status) $($sig.SignerCertificate.Subject))"; Remove-Item $f -Force; $f = $null
+    }
+  }
+  if ($f) {
+    # Firefox restores open tabs on next start; its files must not be in use while installing
+    Get-Process firefox | Stop-Process -Force; Start-Sleep -Seconds 2
+    $a = '/S'; if ($exe) { $a = "/S /InstallDirectoryPath=`"$(Split-Path $exe)`"" }
+    Run $f $a | Out-Null
+  }
+  $v = FileVer (Get-FirefoxExe)
+  if ((Test-Min $v $req) -eq $true) { return "Firefox $(Norm $v) installed (signed by Mozilla). Reopen Firefox; tabs are restored." }
+  $id = 'Mozilla.Firefox'; if ($chan -ne 'release') { $id = 'Mozilla.Firefox.ESR' }
+  if ($chan -ne 'esr115') { Winget $id | Out-Null }
+  $v = FileVer (Get-FirefoxExe)
+  if ((Test-Min $v $req) -eq $true) { return "Firefox $(Norm $v) installed with winget. Reopen Firefox." }
+  return "FAILED: Firefox is still $(Norm $v) (needs $req). Update from Help > About Firefox."
+}
+
 function Remove-Emudhra {
   $n = 0
   foreach ($store in 'CA', 'Root') {
@@ -576,15 +608,7 @@ function Fix-Row($r) {
       if (Winget 'Microsoft.Edge') { return 'Updated with winget. Relaunch Edge.' }
       return 'FAILED: update Edge from edge://settings/help'
     }
-    'firefox' {
-      $id = 'Mozilla.Firefox'; if ($r.Arg -ne 'release') { $id = 'Mozilla.Firefox.ESR' }
-      if ($r.Arg -ne 'esr115' -and (Winget $id)) { return 'Updated with winget. Relaunch Firefox.' }
-      $prod = 'firefox-latest-ssl'; if ($r.Arg -eq 'esr') { $prod = 'firefox-esr-latest-ssl' }; if ($r.Arg -eq 'esr115') { $prod = 'firefox-esr115-latest-ssl' }
-      $osTag = 'win'; if ($is64) { $osTag = 'win64' }
-      $f = Download "https://download.mozilla.org/?product=$prod&os=$osTag&lang=en-US" 'firefox-setup.exe'
-      if ($f) { Run $f '/S' | Out-Null; return 'Installed latest Firefox. Relaunch Firefox.' }
-      return 'FAILED: update Firefox from Help > About Firefox'
-    }
+    'firefox' { return (Update-Firefox $r.Arg $r.Req) }
     'node' {
       $ver = $r.Arg
       $f = Download "https://nodejs.org/dist/v$ver/node-v$ver-$arch.msi" "node-v$ver-$arch.msi"
