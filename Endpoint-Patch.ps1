@@ -57,7 +57,7 @@ function WhereAll($exe) {
   $r = @(); foreach ($l in $out) { if ($l -and ($l -notmatch 'WindowsApps')) { $r += $l.Trim() } }
   return , $r
 }
-function Has($exe) { return (@(WhereAll $exe).Count -gt 0) }
+function Has($exe) { $r = WhereAll $exe; return ($r.Count -gt 0) }
 function Get-Wmi($class) { if (Get-Command Get-CimInstance) { return Get-CimInstance $class } return Get-WmiObject $class }
 
 # OS
@@ -68,7 +68,7 @@ $legacy = ($osVer.Major -eq 6)                    # Windows 7 / 8 / 8.1 / Server
 $is64 = ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'AMD64')
 $arch = 'x86'; if ($is64) { $arch = 'x64' }; if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $arch = 'arm64' }
 cmd /c "net session >nul 2>&1"; $isAdmin = ($LASTEXITCODE -eq 0)
-$hasWinget = Has 'winget.exe'
+$hasWinget = [bool](Get-Command winget.exe)          # winget lives in WindowsApps, which WhereAll skips
 
 # Installed programs from the registry (works on every Windows version)
 $apps = @()
@@ -306,11 +306,11 @@ function Invoke-Scan {
   }
 
   # PHP (every php.exe found)
-  $phps = @(WhereAll 'php.exe')
+  $phps = WhereAll 'php.exe'
   foreach ($pat in 'C:\xampp\php\php.exe', 'C:\wamp\bin\php\*\php.exe', 'C:\wamp64\bin\php\*\php.exe', 'C:\laragon\bin\php\*\php.exe', 'C:\php\php.exe', 'C:\php*\php.exe', 'C:\tools\php*\php.exe', "$env:ProgramFiles\PHP\*\php.exe", "${env:ProgramFiles(x86)}\PHP\*\php.exe") {
     foreach ($i in (Get-Item $pat)) { $phps += $i.FullName }
   }
-  $phps = $phps | Sort-Object -Unique
+  $phps = $phps | Where-Object { $_ -notmatch '\.bak-\d{8}' } | Sort-Object -Unique      # skip this script's own backups
   if (-not $phps) { Add-Row 'Language' 'PHP' '-' '8.5.12 / 8.4.27 / 8.3.36 / 8.2.35' '-' '-' }
   foreach ($p in $phps) {
     $v = cmd /c "`"$p`" -r `"echo PHP_VERSION;`" 2>nul"; if (-not (Norm $v)) { $v = FileVer $p }
@@ -331,7 +331,7 @@ function Invoke-Scan {
   if (-not $tom.Count) { Add-Row 'Server' 'Apache Tomcat' '-' '11.0.27 / 10.1.61 / 9.0.123' '-' '-' }
   $seen = @()
   foreach ($t in $tom) {
-    if ($seen -contains $t.Dir) { continue }; $seen += $t.Dir
+    if ($seen -contains $t.Dir -or $t.Dir -match '\.bak-\d{8}') { continue }; $seen += $t.Dir
     $m = Select-String -Path (Join-Path $t.Dir 'RELEASE-NOTES') -Pattern 'Apache Tomcat Version\s+([\d\.]+)' | Select-Object -First 1
     $n = $null; if ($m) { $n = $m.Matches[0].Groups[1].Value } else { $n = Norm $t.Version }
     $br = ($n -split '\.')[0..1] -join '.'
@@ -343,7 +343,7 @@ function Invoke-Scan {
   }
 
   # Python: LiteLLM and Pillow
-  $pys = @(WhereAll 'python.exe')
+  $pys = WhereAll 'python.exe'
   foreach ($pa in (Find-App '^Python 3')) { if ($pa.Location) { $c = Join-Path $pa.Location 'python.exe'; if (Test-Path $c) { $pys += $c } } }
   $pys = $pys | Sort-Object -Unique
   if (-not $pys) {
