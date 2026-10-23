@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Endpoint Patch Checklist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: same report style as the October 2026 Threat Report — header, contents, numbered table sections */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#14181f; --muted:#5b6472; --line:#dde1e7; --head:#f0f2f6;
+  --accent:#1f4fd1;
+  --p0:#c4231c; --p0-bg:#fdecea; --p1:#b45309; --p1-bg:#fef3e2; --p2:#1f6f8b; --p2-bg:#e6f3f7; --p3:#4b5563; --p3-bg:#eef0f3;
+  --ok:#17803d; --ok-bg:#e7f5ec; --vio:#7c3aed; --vio-bg:#f1e9ff; --code-bg:#eef1f5;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1217; --surface:#171b22; --fg:#e7eaef; --muted:#9aa3b2; --line:#2a303a; --head:#1c212a; --accent:#7ea2ff;
+  --p0:#ff6b61; --p0-bg:#3a1714; --p1:#f2a54a; --p1-bg:#3a2810; --p2:#5cc1e0; --p2-bg:#0f2d37; --p3:#b3bac6; --p3-bg:#252a33;
+  --ok:#4ad07a; --ok-bg:#12301e; --vio:#c4a5ff; --vio-bg:#2a1d45; --code-bg:#1d222b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1217; --surface:#171b22; --fg:#e7eaef; --muted:#9aa3b2; --line:#2a303a; --head:#1c212a; --accent:#7ea2ff;
+  --p0:#ff6b61; --p0-bg:#3a1714; --p1:#f2a54a; --p1-bg:#3a2810; --p2:#5cc1e0; --p2-bg:#0f2d37; --p3:#b3bac6; --p3-bg:#252a33;
+  --ok:#4ad07a; --ok-bg:#12301e; --vio:#c4a5ff; --vio-bg:#2a1d45; --code-bg:#1d222b; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1320px;margin:0 auto;padding-block:32px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(28px,4.5vw,42px);letter-spacing:-.01em}
+h2{font-size:24px}
+p{margin:0}
+a{color:var(--accent)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{display:flex;flex-direction:column;gap:10px}
+.lede{color:var(--muted);max-width:80ch}
+.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;border-top:4px solid var(--c)}
+.tile b{font-family:var(--display);font-size:20px;color:var(--c)}
+.tile span{font-size:13px;color:var(--muted)}
+.t0{--c:var(--p0)}.t1{--c:var(--p1)}.t2{--c:var(--p2)}.t3{--c:var(--p3)}
+.scope{background:var(--p1-bg);color:var(--fg);border-radius:8px;padding:12px 16px;font-size:14px;border:1px solid var(--line)}
+nav.toc{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+nav.toc ol{margin:8px 0 0;padding-left:22px;columns:2;column-gap:32px}
+nav.toc li{margin-bottom:4px;break-inside:avoid}
+.tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.tools label{font-size:13px;color:var(--muted)}
+#q,#type{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);min-width:0}
+#q{flex:1 1 260px;max-width:440px}
+#q:focus-visible,#type:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:12px;scroll-margin-top:16px}
+.sec-head{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.secnum{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.note{font-size:13.5px;color:var(--muted);max-width:95ch}
+.tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+table.wide{min-width:1240px}
+table.mid{min-width:820px}
+th{text-align:left;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line);background:var(--head);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.grp td{border-top:2px solid var(--line)}
+td.rank{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);width:40px}
+td b{display:block}
+td small{color:var(--muted);display:block}
+.cve{font-family:var(--mono);font-size:12px}
+.date{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.date small{font-family:var(--body);white-space:normal;max-width:18ch}
+.vuln{color:var(--p0);font-family:var(--mono);font-size:12.5px}
+.fix{color:var(--ok);font-family:var(--mono);font-size:12.5px;font-weight:500}
+.where{font-size:12.5px;color:var(--muted)}
+.pill{display:inline-block;font-size:11.5px;padding:2px 7px;border-radius:4px;margin:0 4px 4px 0;white-space:nowrap;font-weight:500}
+.ex{background:var(--p0-bg);color:var(--p0)}
+.no{background:var(--p3-bg);color:var(--p3)}
+.ok{background:var(--ok-bg);color:var(--ok)}
+.type{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.03em;padding:2px 7px;border-radius:4px;white-space:nowrap;background:var(--tbg);color:var(--tc)}
+.ty-lang{--tc:var(--p2);--tbg:var(--p2-bg)}
+.ty-srv{--tc:var(--p1);--tbg:var(--p1-bg)}
+.ty-sup{--tc:var(--vio);--tbg:var(--vio-bg)}
+.ty-lib{--tc:var(--ok);--tbg:var(--ok-bg)}
+.ty-brw{--tc:var(--accent);--tbg:var(--head)}
+.ty-os{--tc:var(--p3);--tbg:var(--p3-bg)}
+.ty-pki{--tc:var(--p0);--tbg:var(--p0-bg)}
+.ty-ctr{--tc:var(--p2);--tbg:var(--head)}
+.pr{font-family:var(--mono);font-size:11.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--bg-c);color:var(--c);white-space:nowrap}
+.r0{--c:var(--p0);--bg-c:var(--p0-bg)}.r1{--c:var(--p1);--bg-c:var(--p1-bg)}.r2{--c:var(--p2);--bg-c:var(--p2-bg)}.r3{--c:var(--p3);--bg-c:var(--p3-bg)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;background:var(--code-bg);padding:1px 5px;border-radius:3px}
+#nomatch{color:var(--muted);font-size:14px}
+footer{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:18px}
+@media (max-width:760px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}nav.toc ol{columns:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Endpoint security · prepared 23 Oct 2026 · October 2026 vulnerabilities only</span>
+    <h1>Endpoint Patch Checklist</h1>
+    <p class="lede">What to update on employee laptops, desktops, servers and containers for vulnerabilities identified in October 2026. Every version branch has its own row with the date the vulnerability was identified and the date the stable patch was released.</p>
+  </header>
+
+  <div class="strip" aria-label="Device types">
+    <div class="tile t0"><b>Laptops &amp; desktops</b><span>11 items · OS, browsers, Java, local tools</span></div>
+    <div class="tile t1"><b>Servers</b><span>13 items · PHP, Node, Java, Tomcat, GitLab</span></div>
+    <div class="tile t2"><b>Containers</b><span>8 items · base images, LiteLLM tags</span></div>
+    <div class="tile t3"><b>Developer machines</b><span>8 items · dependencies, lockfiles</span></div>
+  </div>
+
+  <p class="scope"><b>Scope.</b> Endpoints only, October 2026 only. Network appliances (VeloCloud, Fortinet, Palo Alto, Cisco, BeyondTrust) are handled by the network team. Older issues still being exploited (Plex2Shell from August, BeyondTrust from August, GlobalProtect from May) are in the Threat Report.</p>
+
+  <nav class="toc" aria-label="Contents">
+    <span class="eyebrow">Contents</span>
+    <ol>
+      <li><a href="#master">All October vulnerabilities, per version</a></li>
+      <li><a href="#laptops">Employee laptops and desktops</a></li>
+      <li><a href="#servers">Servers</a></li>
+      <li><a href="#containers">Containers</a></li>
+      <li><a href="#devs">Developer machines</a></li>
+      <li><a href="#types">Type definitions</a></li>
+      <li><a href="#rollout">Pushing updates across the company</a></li>
+      <li><a href="#notes">Notes on dates and versions</a></li>
+    </ol>
+  </nav>
+
+  <div class="tools">
+    <label for="q">Filter</label>
+    <input id="q" type="search" placeholder="Software, CVE, version or date, e.g. php, 21 Oct, 8.4">
+    <label for="type">Type</label>
+    <select id="type">
+      <option value="">All types</option>
+      <option>Language</option>
+      <option>Runtime</option>
+      <option>Server</option>
+      <option>Browser</option>
+      <option>Library</option>
+      <option>Supply chain</option>
+      <option>Operating system</option>
+      <option>Certificate</option>
+      <option>Container</option>
+    </select>
+  </div>
+  <p id="nomatch" hidden>No rows match that filter.</p>
+
+  <!-- 1 -->
+  <section id="master">
+    <div class="sec-head"><span class="secnum">01</span><h2>All October vulnerabilities, per version</h2></div>
+    <p class="note">One row per version branch. "Identified" is the first public date the vulnerability was known (researcher report, leak or advisory). "Patch released" is the date the stable fixed version came out.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Type</th><th>Software</th><th>Branch</th><th>Vulnerable versions</th><th>Stable patch version</th><th>CVE</th><th>Identified</th><th>Patch released</th><th>Exploited?</th><th>Priority</th></tr></thead>
+      <tbody>
+        <!-- PHP -->
+        <tr class="grp"><td class="rank">1</td><td><span class="type ty-lang">Language</span></td><td><b>PHP</b><small>PHP2Shell</small></td><td>8.5</td><td class="vuln">8.5.0 – 8.5.11</td><td class="fix">8.5.12</td><td class="cve">CVE-2026-109618<br>CVE-2026-109619</td><td class="date">20 Oct 2026<small>Details leaked</small></td><td class="date">21 Oct 2026</td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">2</td><td><span class="type ty-lang">Language</span></td><td><b>PHP</b></td><td>8.4</td><td class="vuln">8.4.0 – 8.4.26</td><td class="fix">8.4.27</td><td class="cve">CVE-2026-109618/9</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">3</td><td><span class="type ty-lang">Language</span></td><td><b>PHP</b></td><td>8.3</td><td class="vuln">8.3.0 – 8.3.35</td><td class="fix">8.3.36</td><td class="cve">CVE-2026-109618/9</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">4</td><td><span class="type ty-lang">Language</span></td><td><b>PHP</b></td><td>8.2</td><td class="vuln">8.2.0 – 8.2.34</td><td class="fix">8.2.35</td><td class="cve">CVE-2026-109618/9</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">5</td><td><span class="type ty-lang">Language</span></td><td><b>PHP</b><small>End of life</small></td><td>8.1 / 8.0 / 7.4</td><td class="vuln">All versions</td><td class="fix">No release · source patch only<small>Upgrade to 8.2+</small></td><td class="cve">CVE-2026-109618/9</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026<small>Source patch</small></td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <!-- Node -->
+        <tr class="grp"><td class="rank">6</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js</b><small>JavaScript</small></td><td>26.x</td><td class="vuln">26.0.0 – 26.12.0</td><td class="fix">26.12.1</td><td class="cve">CVE-2026-111497 + 9</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">7</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js</b></td><td>24.x (LTS)</td><td class="vuln">24.0.0 – 24.22.0</td><td class="fix">24.22.1</td><td class="cve">CVE-2026-111497 + 8</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">8</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js</b></td><td>22.x (LTS)</td><td class="vuln">22.0.0 – 22.23.3</td><td class="fix">22.23.4</td><td class="cve">CVE-2026-111497 + 6</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">9</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js</b><small>End of life</small></td><td>20.x and older</td><td class="vuln">All versions</td><td class="fix">No fix · upgrade to 22.23.4+</td><td class="cve">CVE-2026-111497</td><td class="date">21 Oct 2026</td><td class="date">—</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <!-- Java -->
+        <tr class="grp"><td class="rank">10</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java (Oracle JDK)</b><small>October CPU</small></td><td>27</td><td class="vuln">27.0.0</td><td class="fix">27.0.1</td><td class="cve">Oct 2026 CPU</td><td class="date">20 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">11</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java</b></td><td>25 (LTS)</td><td class="vuln">25.0.0 – 25.0.4</td><td class="fix">25.0.5</td><td class="cve">Oct 2026 CPU</td><td class="date">20 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">12</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java</b></td><td>21 (LTS)</td><td class="vuln">21.0.0 – 21.0.12</td><td class="fix">21.0.13</td><td class="cve">Oct 2026 CPU</td><td class="date">20 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">13</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java</b></td><td>17 (LTS)</td><td class="vuln">17.0.0 – 17.0.20</td><td class="fix">17.0.21</td><td class="cve">Oct 2026 CPU</td><td class="date">20 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">14</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java</b></td><td>11 (LTS)</td><td class="vuln">11.0.0 – 11.0.32</td><td class="fix">11.0.33</td><td class="cve">Oct 2026 CPU</td><td class="date">20 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">15</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java</b></td><td>8</td><td class="vuln">8u510 and older</td><td class="fix">8u511</td><td class="cve">Oct 2026 CPU</td><td class="date">20 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">16</td><td><span class="type ty-pki">Certificate</span></td><td><b>Java / GraalVM</b><small>Emergency certificate fix</small></td><td>All lines</td><td class="vuln">Builds without .0.2</td><td class="fix">.0.2 builds<small>e.g. 27.0.1.0.2, 21.0.13.0.2</small></td><td class="cve">CVE-2026-91403</td><td class="date">17 Oct 2026<small>eMudhra keys</small></td><td class="date">22 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <!-- Tomcat -->
+        <tr class="grp"><td class="rank">17</td><td><span class="type ty-srv">Server</span></td><td><b>Apache Tomcat</b><small>Java app server</small></td><td>11.0</td><td class="vuln">11.0.0-M1 – 11.0.26</td><td class="fix">11.0.27</td><td class="cve">CVE-2026-101296</td><td class="date">20 Oct 2026</td><td class="date">By 20 Oct 2026<small>Out at advisory time</small></td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">18</td><td><span class="type ty-srv">Server</span></td><td><b>Apache Tomcat</b></td><td>10.1</td><td class="vuln">10.1.0-M1 – 10.1.60</td><td class="fix">10.1.61</td><td class="cve">CVE-2026-101296</td><td class="date">20 Oct 2026</td><td class="date">By 20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">19</td><td><span class="type ty-srv">Server</span></td><td><b>Apache Tomcat</b></td><td>9.0</td><td class="vuln">9.0.0.M1 – 9.0.122</td><td class="fix">9.0.123</td><td class="cve">CVE-2026-101296</td><td class="date">20 Oct 2026</td><td class="date">By 20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">20</td><td><span class="type ty-srv">Server</span></td><td><b>Apache Tomcat</b><small>End of life</small></td><td>8.5 / 7.0</td><td class="vuln">8.5.0 – 8.5.100 · 7.0.0 – 7.0.109</td><td class="fix">No fix · upgrade to 9.0.123+</td><td class="cve">CVE-2026-101296</td><td class="date">20 Oct 2026</td><td class="date">—</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <!-- GitLab -->
+        <tr class="grp"><td class="rank">21</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab CE/EE</b><small>Self-managed</small></td><td>19.5</td><td class="vuln">19.5.0</td><td class="fix">19.5.1</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">22</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b></td><td>19.4</td><td class="vuln">19.4.0 – 19.4.2</td><td class="fix">19.4.3</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">23</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b></td><td>19.3</td><td class="vuln">19.3.0 – 19.3.5</td><td class="fix">19.3.6</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">24</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b></td><td>19.2</td><td class="vuln">19.2.0 – 19.2.8</td><td class="fix">19.2.9</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">25</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b></td><td>19.1</td><td class="vuln">19.1.0 – 19.1.8</td><td class="fix">19.1.9</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">26</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b></td><td>19.0</td><td class="vuln">19.0.0 – 19.0.9</td><td class="fix">19.0.10</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">27</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b></td><td>18.11</td><td class="vuln">18.11.0 – 18.11.12</td><td class="fix">18.11.13</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">28</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab</b><small>Unsupported</small></td><td>7.0 – 18.10</td><td class="vuln">All versions</td><td class="fix">No fix · upgrade to a supported line</td><td class="cve">CVE-2026-110264</td><td class="date">21 Oct 2026</td><td class="date">—</td><td><span class="pill ok">No</span></td><td><span class="pr r0">P0</span></td></tr>
+        <!-- Browsers -->
+        <tr class="grp"><td class="rank">29</td><td><span class="type ty-brw">Browser</span></td><td><b>Google Chrome</b></td><td>Stable</td><td class="vuln">Below 156.0.8078.47</td><td class="fix">156.0.8078.47 (Linux)<br>156.0.8078.47/.48 (Win/Mac)</td><td class="cve">CVE-2026-113271, -113303, -113341, -113279, -113072, -113280</td><td class="date">8 Oct 2026<small>113271 reported; 113303 on 15 Oct</small></td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">30</td><td><span class="type ty-brw">Browser</span></td><td><b>Microsoft Edge</b></td><td>Stable</td><td class="vuln">Below 156.0.4314.42</td><td class="fix">156.0.4314.42</td><td class="cve">Chromium 156 fixes</td><td class="date">8 Oct 2026<small>Chromium reports</small></td><td class="date">22 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">31</td><td><span class="type ty-brw">Browser</span></td><td><b>Microsoft Edge</b></td><td>Extended Stable</td><td class="vuln">Below 152.0.4191.137</td><td class="fix">152.0.4191.137</td><td class="cve">Chromium fixes</td><td class="date">Oct 2026</td><td class="date">16 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">32</td><td><span class="type ty-brw">Browser</span></td><td><b>Mozilla Firefox</b></td><td>Release</td><td class="vuln">Below 158.0.1</td><td class="fix">158.0.1</td><td class="cve">CVE-2026-113399, -113470, -113400, -113401</td><td class="date">17 Oct 2026<small>eMudhra (113470)</small></td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">33</td><td><span class="type ty-brw">Browser</span></td><td><b>Mozilla Firefox</b></td><td>ESR 153</td><td class="vuln">Below 153.5.1</td><td class="fix">153.5.1</td><td class="cve">MFSA 2026-112</td><td class="date">17 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">34</td><td><span class="type ty-brw">Browser</span></td><td><b>Mozilla Firefox</b></td><td>ESR 115</td><td class="vuln">Below 115.43.1</td><td class="fix">115.43.1</td><td class="cve">MFSA 2026-113</td><td class="date">17 Oct 2026</td><td class="date">20 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <!-- OS -->
+        <tr class="grp"><td class="rank">35</td><td><span class="type ty-os">Operating system</span></td><td><b>Windows</b><small>October Patch Tuesday</small></td><td>All supported</td><td class="vuln">No October update installed</td><td class="fix">October 2026 cumulative update</td><td class="cve">1 exploited zero-day</td><td class="date">13 Oct 2026</td><td class="date">13 Oct 2026</td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <!-- Supply chain -->
+        <tr class="grp"><td class="rank">36</td><td><span class="type ty-sup">Supply chain</span></td><td><b>LiteLLM</b><small>Python (PyPI) + Docker</small></td><td>1.107.0</td><td class="vuln">1.107.0 · Docker v1.107.0, latest, main-latest, main-stable</td><td class="fix">1.106.2 (last clean)</td><td class="cve">Malicious release</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026<small>Malicious version pulled</small></td><td><span class="pill ex">Yes</span></td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">37</td><td><span class="type ty-sup">Supply chain</span></td><td><b>OVHcloud CLI</b><small>Developer tool</small></td><td>0.11 – 0.15</td><td class="vuln">0.11.0 – 0.15.0 downloaded on 19 Oct</td><td class="fix">0.16.0</td><td class="cve">Replaced binaries</td><td class="date">19 Oct 2026</td><td class="date">Oct 2026<small>Exact date not confirmed</small></td><td><span class="pill ex">Yes</span></td><td><span class="pr r2">P2</span></td></tr>
+        <!-- Libraries -->
+        <tr class="grp"><td class="rank">38</td><td><span class="type ty-lib">Library</span></td><td><b>Pillow</b><small>Python image library</small></td><td>2.x – 12.x</td><td class="vuln">2.0.0 – below 13.0.0</td><td class="fix">13.0.0</td><td class="cve">CVE-2026-112393, -112395, -112396, -112897</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026<small>Advisory date</small></td><td><span class="pill ok">No</span></td><td><span class="pr r2">P2</span></td></tr>
+        <tr><td class="rank">39</td><td><span class="type ty-lib">Library</span></td><td><b>Next.js</b><small>JavaScript framework</small></td><td>16.x</td><td class="vuln">Below 16.4.1</td><td class="fix">16.4.1</td><td class="cve">2 critical RCEs</td><td class="date">14 Oct 2026</td><td class="date">14 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">40</td><td><span class="type ty-lib">Library</span></td><td><b>Next.js</b></td><td>15.x</td><td class="vuln">Below 15.5.28</td><td class="fix">15.5.28</td><td class="cve">2 critical RCEs</td><td class="date">14 Oct 2026</td><td class="date">14 Oct 2026</td><td><span class="pill ok">No</span></td><td><span class="pr r1">P1</span></td></tr>
+        <!-- Certificates -->
+        <tr class="grp"><td class="rank">41</td><td><span class="type ty-pki">Certificate</span></td><td><b>eMudhra intermediates</b><small>OS and browser trust stores</small></td><td>G3B / G3C</td><td class="vuln">EM DV/OV/EV TLS CA, EM OV CS CA trusted</td><td class="fix">Blocked by update<small>Chrome, Firefox 17 Oct · Apple 19 Oct · Microsoft 20 Oct</small></td><td class="cve">Key compromise</td><td class="date">17 Oct 2026<small>Weak keys since Apr 2025</small></td><td class="date">17–20 Oct 2026</td><td><span class="pill ok">None known</span></td><td><span class="pr r1">P1</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 2 -->
+  <section id="laptops">
+    <div class="sec-head"><span class="secnum">02</span><h2>Employee laptops and desktops</h2></div>
+    <p class="note">Windows, macOS and Linux laptops and desktops used by employees.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Type</th><th>Software</th><th>Outdated if</th><th>Stable patch version</th><th>Identified</th><th>Patch released</th><th>Where to see the version</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td><span class="type ty-os">Operating system</span></td><td><b>Windows / macOS updates</b></td><td class="vuln">No update since 13 Oct</td><td class="fix">October cumulative update</td><td class="date">13 Oct 2026</td><td class="date">13 Oct 2026</td><td class="where">Settings → Windows Update → Update history</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">2</td><td><span class="type ty-brw">Browser</span></td><td><b>Google Chrome</b></td><td class="vuln">&lt; 156.0.8078.47</td><td class="fix">156.0.8078.47 / .48</td><td class="date">8 Oct 2026</td><td class="date">20 Oct 2026</td><td class="where">Menu → Help → About Google Chrome</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">3</td><td><span class="type ty-brw">Browser</span></td><td><b>Microsoft Edge</b></td><td class="vuln">&lt; 156.0.4314.42</td><td class="fix">156.0.4314.42</td><td class="date">8 Oct 2026</td><td class="date">22 Oct 2026</td><td class="where">Menu → Help and feedback → About Edge</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">4</td><td><span class="type ty-brw">Browser</span></td><td><b>Mozilla Firefox</b></td><td class="vuln">&lt; 158.0.1 · ESR &lt; 153.5.1 / 115.43.1</td><td class="fix">158.0.1 · 153.5.1 · 115.43.1</td><td class="date">17 Oct 2026</td><td class="date">20 Oct 2026</td><td class="where">Menu → Help → About Firefox</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">5</td><td><span class="type ty-brw">Browser</span></td><td><b>Browser restart</b></td><td class="vuln">Browser not restarted after update</td><td class="fix">Relaunch</td><td class="date">—</td><td class="date">—</td><td class="where">"Relaunch" button in the browser</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">6</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java (JDK / JRE)</b></td><td class="vuln">21 &lt; 21.0.13 · 17 &lt; 17.0.21 · 11 &lt; 11.0.33 · 8 &lt; 8u511</td><td class="fix">Fixed build, then .0.2</td><td class="date">20 Oct 2026<small>Cert fix 17 Oct</small></td><td class="date">20 Oct 2026<small>.0.2 on 22 Oct</small></td><td class="where">Control Panel → Programs → Java</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">7</td><td><span class="type ty-pki">Certificate</span></td><td><b>Certificate stores</b></td><td class="vuln">eMudhra G3 intermediates present</td><td class="fix">Removed by OS update</td><td class="date">17 Oct 2026</td><td class="date">19–20 Oct 2026</td><td class="where">certmgr.msc → Intermediate Certification Authorities</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">8</td><td><span class="type ty-lang">Language</span></td><td><b>Local PHP</b><small>XAMPP, WAMP, Laragon</small></td><td class="vuln">8.5 &lt; 8.5.12 · 8.4 &lt; 8.4.27 · 8.3 &lt; 8.3.36 · 8.2 &lt; 8.2.35 · 8.1 or older</td><td class="fix">8.5.12 / 8.4.27 / 8.3.36 / 8.2.35</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">XAMPP control panel / phpinfo page</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">9</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js</b></td><td class="vuln">22 &lt; 22.23.4 · 24 &lt; 24.22.1 · 26 &lt; 26.12.1 · 20 or older</td><td class="fix">22.23.4 / 24.22.1 / 26.12.1</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Settings → Apps → Installed apps → Node.js</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">10</td><td><span class="type ty-sup">Supply chain</span></td><td><b>Python: LiteLLM</b></td><td class="vuln">1.107.0 installed</td><td class="fix">1.106.2 + rotate secrets</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Ask the user / IT inventory</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">11</td><td><span class="type ty-sup">Supply chain</span></td><td><b>OVHcloud CLI</b></td><td class="vuln">0.11.0–0.15.0 downloaded 19 Oct</td><td class="fix">0.16.0</td><td class="date">19 Oct 2026</td><td class="date">Oct 2026</td><td class="where">IT inventory</td><td><span class="pr r2">P2</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 3 -->
+  <section id="servers">
+    <div class="sec-head"><span class="secnum">03</span><h2>Servers</h2></div>
+    <p class="note">Web, application and build servers (Windows or Linux). Patch internet-facing servers first.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Type</th><th>Software</th><th>Outdated if</th><th>Stable patch version</th><th>Identified</th><th>Patch released</th><th>Action</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td><span class="type ty-lang">Language</span></td><td><b>PHP</b><small>mod_php, PHP-FPM, php-cgi, FrankenPHP, LiteSpeed</small></td><td class="vuln">Below fixed version; 8.1 or older</td><td class="fix">8.5.12 / 8.4.27 / 8.3.36 / 8.2.35 or distro backport</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Update, then restart PHP-FPM and the web server</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">2</td><td><span class="type ty-srv">Server</span></td><td><b>Web server restart</b></td><td class="vuln">Not restarted after PHP patch</td><td class="fix">Restart</td><td class="date">—</td><td class="date">—</td><td class="where">Patched PHP loads only after restart</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">3</td><td><span class="type ty-lang">Language</span></td><td><b>PHP workaround</b><small>If patching must wait</small></td><td class="vuln">upload_progress enabled, no WAF</td><td class="fix">session.upload_progress.enabled=0 + WAF rules</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Covers CVE-2026-109619 only</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">4</td><td><span class="type ty-lang">Language</span></td><td><b>PHP log review</b></td><td class="vuln">Worker crashes, malformed multipart requests</td><td class="fix">Investigate</td><td class="date">21 Oct 2026<small>First exploitation</small></td><td class="date">—</td><td class="where">PHP-FPM and Apache/Nginx error logs</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">5</td><td><span class="type ty-srv">Server</span></td><td><b>GitLab (self-managed)</b></td><td class="vuln">Below 19.5.1 / 19.4.3 / 19.3.6 / 19.2.9 / 19.1.9 / 19.0.10 / 18.11.13</td><td class="fix">Matching fixed release</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Admin Area → Dashboard → version</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">6</td><td><span class="type ty-sup">Supply chain</span></td><td><b>LiteLLM proxy / apps</b></td><td class="vuln">1.107.0 installed</td><td class="fix">Rebuild on 1.106.2, rotate secrets</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Treat the server as compromised</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">7</td><td><span class="type ty-os">Operating system</span></td><td><b>Windows Server</b></td><td class="vuln">No October update</td><td class="fix">October cumulative update</td><td class="date">13 Oct 2026</td><td class="date">13 Oct 2026</td><td class="where">Update history</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">8</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js</b></td><td class="vuln">22 &lt; 22.23.4 · 24 &lt; 24.22.1 · 26 &lt; 26.12.1</td><td class="fix">22.23.4 / 24.22.1 / 26.12.1</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Update and restart Node services</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">9</td><td><span class="type ty-lang">Runtime</span></td><td><b>Java</b></td><td class="vuln">Below fixed builds</td><td class="fix">27.0.1 / 25.0.5 / 21.0.13 / 17.0.21 / 11.0.33 / 8u511 (.0.2)</td><td class="date">20 Oct 2026</td><td class="date">20–22 Oct 2026</td><td class="where">Update and restart Java services</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">10</td><td><span class="type ty-srv">Server</span></td><td><b>Apache Tomcat</b></td><td class="vuln">11 &lt; 11.0.27 · 10.1 &lt; 10.1.61 · 9 &lt; 9.0.123 · 8.5 / 7.0</td><td class="fix">11.0.27 / 10.1.61 / 9.0.123</td><td class="date">20 Oct 2026</td><td class="date">By 20 Oct 2026</td><td class="where">Mainly matters if JNDIRealm with SASL is used</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">11</td><td><span class="type ty-os">Operating system</span></td><td><b>Linux security updates</b></td><td class="vuln">Security updates pending</td><td class="fix">Install all</td><td class="date">Oct 2026</td><td class="date">Oct 2026</td><td class="where">Package manager update list</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">12</td><td><span class="type ty-pki">Certificate</span></td><td><b>CA bundles</b><small>ca-certificates, Java cacerts, Python certifi</small></td><td class="vuln">eMudhra G3 intermediates trusted</td><td class="fix">Update bundles and Java</td><td class="date">17 Oct 2026</td><td class="date">17–22 Oct 2026</td><td class="where">Apps with their own bundle ignore OS blocks</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">13</td><td><span class="type ty-lib">Library</span></td><td><b>Pillow in apps</b></td><td class="vuln">&lt; 13.0.0</td><td class="fix">13.0.0</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Python requirements of each app</td><td><span class="pr r2">P2</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 4 -->
+  <section id="containers">
+    <div class="sec-head"><span class="secnum">04</span><h2>Containers</h2></div>
+    <p class="note">Docker / Podman images on servers, build machines and laptops. A container keeps the old version until its image is rebuilt and the container restarted.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Type</th><th>What</th><th>Outdated if</th><th>Fix</th><th>Identified</th><th>Patch released</th><th>Note</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td><span class="type ty-sup">Supply chain</span></td><td><b>LiteLLM image tags</b></td><td class="vuln">v1.107.0, latest, main-latest, main-stable pulled 21 Oct</td><td class="fix">v1.106.2 · stop container · rotate secrets</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Treat the host as compromised</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">2</td><td><span class="type ty-ctr">Container</span></td><td><b>PHP base images</b></td><td class="vuln">php:* built before 21 Oct</td><td class="fix">Pull patched tag, rebuild, redeploy</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Official images already fixed</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">3</td><td><span class="type ty-ctr">Container</span></td><td><b>Node base images</b></td><td class="vuln">node:* built before 21 Oct</td><td class="fix">22.23.4 / 24.22.1 / 26.12.1 tags</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Rebuild every Node service</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">4</td><td><span class="type ty-ctr">Container</span></td><td><b>Java / Tomcat images</b></td><td class="vuln">eclipse-temurin / openjdk / tomcat built before 20 Oct</td><td class="fix">Pull patched tag, rebuild</td><td class="date">20 Oct 2026</td><td class="date">20–22 Oct 2026</td><td class="where">Includes the eMudhra Java fix</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">5</td><td><span class="type ty-ctr">Container</span></td><td><b>Python images</b></td><td class="vuln">Pillow &lt; 13.0.0 or litellm 1.107.0 inside</td><td class="fix">Pin versions, rebuild</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Check requirements files</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">6</td><td><span class="type ty-pki">Certificate</span></td><td><b>CA bundle inside images</b></td><td class="vuln">ca-certificates not updated</td><td class="fix">Rebuild from a fresh base image</td><td class="date">17 Oct 2026</td><td class="date">17–20 Oct 2026</td><td class="where">Images don't get OS updates</td><td><span class="pr r2">P2</span></td></tr>
+        <tr><td class="rank">7</td><td><span class="type ty-ctr">Container</span></td><td><b>Registry image scan</b></td><td class="vuln">No scan since 21 Oct</td><td class="fix">Scan every image</td><td class="date">—</td><td class="date">—</td><td class="where">Use your registry's vulnerability scanner</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">8</td><td><span class="type ty-ctr">Container</span></td><td><b>Floating tags</b></td><td class="vuln">:latest used in production</td><td class="fix">Pin by version or digest</td><td class="date">21 Oct 2026<small>LiteLLM lesson</small></td><td class="date">—</td><td class="where">:latest pulled the LiteLLM malware</td><td><span class="pr r2">P2</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 5 -->
+  <section id="devs">
+    <div class="sec-head"><span class="secnum">05</span><h2>Developer machines</h2></div>
+    <p class="note">Laptops of developers and data / AI engineers. They hold source code, cloud keys and SSH keys, so a compromise here spreads.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Type</th><th>What</th><th>Outdated if</th><th>Fix</th><th>Identified</th><th>Patch released</th><th>Note</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td><span class="type ty-sup">Supply chain</span></td><td><b>LiteLLM in projects</b></td><td class="vuln">litellm==1.107.0 in a lockfile or virtualenv</td><td class="fix">Isolate · rebuild · rotate cloud, SSH, AI keys</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Runs at Python startup even if not imported</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">2</td><td><span class="type ty-lib">Library</span></td><td><b>Next.js projects</b></td><td class="vuln">16 &lt; 16.4.1 · 15 &lt; 15.5.28</td><td class="fix">16.4.1 / 15.5.28</td><td class="date">14 Oct 2026</td><td class="date">14 Oct 2026</td><td class="where">package.json of each project</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">3</td><td><span class="type ty-lib">Library</span></td><td><b>Pillow in projects</b></td><td class="vuln">&lt; 13.0.0</td><td class="fix">13.0.0</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">requirements.txt / pyproject.toml</td><td><span class="pr r2">P2</span></td></tr>
+        <tr><td class="rank">4</td><td><span class="type ty-lang">Runtime</span></td><td><b>Node.js versions</b></td><td class="vuln">Any installed version below fix (nvm / fnm too)</td><td class="fix">22.23.4 / 24.22.1 / 26.12.1</td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Version managers keep old versions</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">5</td><td><span class="type ty-lang">Language</span></td><td><b>Local PHP stacks</b></td><td class="vuln">XAMPP / WAMP / Laragon with old PHP</td><td class="fix">Update bundled PHP</td><td class="date">20 Oct 2026</td><td class="date">21 Oct 2026</td><td class="where">Low risk unless reachable from network</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">6</td><td><span class="type ty-lang">Runtime</span></td><td><b>JDK inside IDEs</b></td><td class="vuln">IntelliJ / Eclipse on an old bundled JDK</td><td class="fix">Point IDE to the patched JDK</td><td class="date">20 Oct 2026</td><td class="date">20–22 Oct 2026</td><td class="where">IDE project SDK settings</td><td><span class="pr r2">P2</span></td></tr>
+        <tr><td class="rank">7</td><td><span class="type ty-sup">Supply chain</span></td><td><b>Fake PHP2Shell PoCs</b></td><td class="vuln">php2shell repos cloned and run</td><td class="fix">Delete · scan the machine</td><td class="date">21 Oct 2026</td><td class="date">—</td><td class="where">Many PoC repos carry malware</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">8</td><td><span class="type ty-sup">Supply chain</span></td><td><b>Secrets on disk</b></td><td class="vuln">Railway env vars or keys not rotated</td><td class="fix">Rotate · use a secret manager</td><td class="date">21 Oct 2026<small>Railway breach</small></td><td class="date">—</td><td class="where">.env files, cloud and SSH key folders</td><td><span class="pr r1">P1</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 6 -->
+  <section id="types">
+    <div class="sec-head"><span class="secnum">06</span><h2>Type definitions</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>Type</th><th>Meaning</th><th>October 2026 examples</th></tr></thead>
+      <tbody>
+        <tr><td><span class="type ty-lang">Language</span></td><td>Programming language engine that runs code on a server or laptop.</td><td>PHP</td></tr>
+        <tr><td><span class="type ty-lang">Runtime</span></td><td>Engine that runs programs written in a language.</td><td>Node.js (JavaScript), Java JDK / JRE</td></tr>
+        <tr><td><span class="type ty-srv">Server</span></td><td>Server software that hosts apps or services.</td><td>Apache Tomcat, GitLab</td></tr>
+        <tr><td><span class="type ty-brw">Browser</span></td><td>Web browser on employee devices.</td><td>Chrome, Edge, Firefox</td></tr>
+        <tr><td><span class="type ty-lib">Library</span></td><td>Code package that apps include.</td><td>Pillow (Python), Next.js (JavaScript)</td></tr>
+        <tr><td><span class="type ty-sup">Supply chain</span></td><td>Attack through a trusted download or vendor rather than a bug.</td><td>LiteLLM 1.107.0, OVHcloud CLI binaries, Railway secrets</td></tr>
+        <tr><td><span class="type ty-os">Operating system</span></td><td>Windows, macOS or Linux updates.</td><td>Windows October Patch Tuesday</td></tr>
+        <tr><td><span class="type ty-pki">Certificate</span></td><td>Trust certificates that verify websites and signed software.</td><td>eMudhra intermediates, Java CVE-2026-91403</td></tr>
+        <tr><td><span class="type ty-ctr">Container</span></td><td>Docker / Podman images that bundle their own copies of software.</td><td>php, node, java, python base images</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 7 -->
+  <section id="rollout">
+    <div class="sec-head"><span class="secnum">07</span><h2>Pushing updates across the company</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>Tool</th><th>What to update with it</th></tr></thead>
+      <tbody>
+        <tr><td><b>Microsoft Intune</b></td><td>Windows Update rings; Chrome and Edge update policies; Java and Node.js as Win32 apps.</td></tr>
+        <tr><td><b>Group Policy</b></td><td>Chrome / Edge templates: auto-update and RelaunchNotification so users restart.</td></tr>
+        <tr><td><b>SCCM / ConfigMgr</b></td><td>Software Updates plus a third-party catalog for Chrome, Firefox and Java.</td></tr>
+        <tr><td><b>Jamf (macOS)</b></td><td>Patch Management titles for Chrome, Firefox, Edge and Java.</td></tr>
+        <tr><td><b>Linux package managers</b></td><td>apt / dnf for PHP, Node.js, Java, Tomcat and ca-certificates; restart services after.</td></tr>
+        <tr><td><b>CI/CD pipelines</b></td><td>Rebuild container images from patched base images; pin versions in lockfiles.</td></tr>
+        <tr><td><b>No management tool</b></td><td>Share this page with each team; users update browsers from the About page and restart.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 8 -->
+  <section id="notes">
+    <div class="sec-head"><span class="secnum">08</span><h2>Notes on dates and versions</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>Topic</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td><b>Identified date</b></td><td>The first public date: researcher report (Chrome), leak (PHP), discovery (eMudhra) or vendor advisory. Most vendors don't publish the private discovery date.</td></tr>
+        <tr><td><b>Patch released date</b></td><td>The date the stable fixed version was published. Tomcat's fixed versions were already out when the advisory came on 20 Oct. OVHcloud CLI 0.16.0's exact date was not confirmed.</td></tr>
+        <tr><td><b>LiteLLM</b></td><td>Not a bug. Version 1.107.0 was malicious, so the fix is going back to 1.106.2, the last clean release.</td></tr>
+        <tr><td><b>Linux distros</b></td><td>Ubuntu, Debian and RHEL often patch PHP and Java without changing the upstream version number. Check the distro's security tracker.</td></tr>
+        <tr><td><b>Vulnerable ranges</b></td><td>Ranges like "8.4.0 – 8.4.26" are derived from the fixed version: everything before the fix on that branch is vulnerable.</td></tr>
+        <tr><td><b>Not October</b></td><td>Left out of this page: Plex2Shell (fixed Aug 2026), BeyondTrust (exploited since Aug 2026), Palo Alto GlobalProtect (May 2026). All three are still exploited and listed in the Threat Report.</td></tr>
+        <tr><td><b>Source data</b></td><td>Vendor advisories and security reporting as of 23 Oct 2026. Check the vendor page before signing off a patch.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer>
+    <p>Prepared 23 Oct 2026. Companion files in C:\Users\Finstein-Emp\Cyber: October-2026-Threat-Report.html and Patch-Priority-Board.html.</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var q=document.getElementById('q'), ty=document.getElementById('type');
+  var none=document.getElementById('nomatch');
+  var tables=[].slice.call(document.querySelectorAll('table[data-filter]'));
+  function run(){
+    var t=q.value.trim().toLowerCase(), want=ty.value.toLowerCase(), total=0;
+    tables.forEach(function(tb){
+      var shown=0;
+      tb.querySelectorAll('tbody tr').forEach(function(r){
+        var tag=r.querySelector('.type');
+        var okType=!want||(tag&&tag.textContent.toLowerCase()===want);
+        var m=okType&&(!t||r.textContent.toLowerCase().indexOf(t)>-1);
+        r.hidden=!m; if(m)shown++;
+      });
+      tb.closest('section').hidden=shown===0; total+=shown;
+    });
+    none.hidden=total!==0;
+  }
+  q.addEventListener('input',run);
+  ty.addEventListener('change',run);
+})();
+</script>
+</body>
+</html>
