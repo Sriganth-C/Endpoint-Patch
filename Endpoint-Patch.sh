@@ -204,6 +204,7 @@ scan() {
   # Java (every JVM)
   local javas=() j
   for j in $(command -v -a java 2>/dev/null) /usr/lib/jvm/*/bin/java /usr/java/*/bin/java /opt/*/bin/java /opt/java/*/bin/java; do
+    case "$j" in *.bak-[0-9]*) continue;; esac          # skip this script's own backups
     [ -x "$j" ] && javas+=("$(readlink -f "$j")")
   done
   if [ ${#javas[@]} -eq 0 ]; then row Runtime "Java (JDK / JRE)" "-" "21.0.13 / 17.0.21 / 11.0.33 / 8u511" "-" "-"; fi
@@ -256,7 +257,9 @@ scan() {
   # Apache Tomcat
   local found=0 rn
   for rn in /opt/*tomcat*/RELEASE-NOTES /opt/tomcat/*/RELEASE-NOTES /usr/share/tomcat*/RELEASE-NOTES /usr/local/*tomcat*/RELEASE-NOTES /var/lib/tomcat*/RELEASE-NOTES /srv/*tomcat*/RELEASE-NOTES; do
-    [ -f "$rn" ] || continue; found=1
+    [ -f "$rn" ] || continue
+    case "$rn" in *.bak-[0-9]*) continue;; esac         # skip this script's own backups
+    found=1
     local td; td=$(dirname "$(readlink -f "$rn")")
     v=$(grep -oE 'Apache Tomcat Version [0-9.]+' "$rn" | head -n1 | awk '{print $4}'); local req; req=$(tomcat_min "$(branch "$v")")
     local tp; tp=$(pkg_of "$rn")
