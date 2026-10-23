@@ -22,6 +22,9 @@
 param([switch]$ScanOnly, [switch]$Yes, [string]$ScanProjects = "")
 
 $ErrorActionPreference = 'SilentlyContinue'
+# Company-managed PCs often lock PowerShell to Constrained Language Mode; this script only uses
+# what that mode allows, and skips the few full-mode extras when it is active.
+$FullLang = ("$($ExecutionContext.SessionState.LanguageMode)" -eq 'FullLanguage')
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $here) { $here = $env:TEMP }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
@@ -87,7 +90,9 @@ function Download($url, $file) {
   $out = Join-Path $dl $file
   if (Test-Path $out) { Remove-Item $out -Force }
   Log "Download $url"
-  try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch { }       # TLS 1.2 (ignored where not allowed)
+  # TLS 1.2 for Invoke-WebRequest. Setting .NET properties is blocked in Constrained Language Mode
+  # (company-locked PowerShell), so only try it in full mode; BITS and certutil below use TLS 1.2 anyway.
+  if ($FullLang) { try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch { } }
   if (Get-Command Invoke-WebRequest) { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing }
   if (-not (Test-Path $out)) { Import-Module BitsTransfer; Start-BitsTransfer -Source $url -Destination $out }
   if (-not (Test-Path $out)) { cmd /c "certutil -urlcache -split -f `"$url`" `"$out`" >nul 2>&1" }
@@ -130,7 +135,7 @@ function Expand-Zip($zip, $dest) {
   New-Item -ItemType Directory -Path $dest | Out-Null
   $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
   if (Test-Path $tar) { & $tar -xf $zip -C $dest; if ($LASTEXITCODE -eq 0) { return $true } }
-  if (Get-Command Expand-Archive) { Expand-Archive -Path $zip -DestinationPath $dest -Force; if (@(Get-ChildItem $dest).Count) { return $true } }
+  if ($FullLang -and (Get-Command Expand-Archive)) { Expand-Archive -Path $zip -DestinationPath $dest -Force; if (@(Get-ChildItem $dest).Count) { return $true } }
   return $false
 }
 function Robo($src, $dst) {
@@ -308,7 +313,7 @@ function Invoke-Scan {
   # PHP (every php.exe found)
   $phps = WhereAll 'php.exe'
   foreach ($pat in 'C:\xampp\php\php.exe', 'C:\wamp\bin\php\*\php.exe', 'C:\wamp64\bin\php\*\php.exe', 'C:\laragon\bin\php\*\php.exe', 'C:\php\php.exe', 'C:\php*\php.exe', 'C:\tools\php*\php.exe', "$env:ProgramFiles\PHP\*\php.exe", "${env:ProgramFiles(x86)}\PHP\*\php.exe") {
-    foreach ($i in (Get-Item $pat)) { $phps += $i.FullName }
+    if (Test-Path $pat) { foreach ($i in (Get-Item $pat)) { $phps += $i.FullName } }
   }
   $phps = $phps | Where-Object { $_ -notmatch '\.bak-\d{8}' } | Sort-Object -Unique      # skip this script's own backups
   if (-not $phps) { Add-Row 'Language' 'PHP' '-' '8.5.12 / 8.4.27 / 8.3.36 / 8.2.35' '-' '-' }
@@ -326,7 +331,7 @@ function Invoke-Scan {
   $tom = @()
   foreach ($t in (Find-App 'Apache Tomcat')) { if ($t.Location -and (Test-Path (Join-Path $t.Location 'RELEASE-NOTES'))) { $tom += , @{ Dir = $t.Location.TrimEnd('\'); Version = $t.Version } } }
   foreach ($pat in "$env:ProgramFiles\Apache Software Foundation\Tomcat*\RELEASE-NOTES", "${env:ProgramFiles(x86)}\Apache Software Foundation\Tomcat*\RELEASE-NOTES", 'C:\tomcat*\RELEASE-NOTES', 'C:\apache-tomcat*\RELEASE-NOTES', 'C:\xampp\tomcat\RELEASE-NOTES') {
-    foreach ($rn in (Get-Item $pat)) { $tom += , @{ Dir = $rn.DirectoryName; Version = '' } }
+    if (Test-Path $pat) { foreach ($rn in (Get-Item $pat)) { $tom += , @{ Dir = $rn.DirectoryName; Version = '' } } }
   }
   if (-not $tom.Count) { Add-Row 'Server' 'Apache Tomcat' '-' '11.0.27 / 10.1.61 / 9.0.123' '-' '-' }
   $seen = @()
