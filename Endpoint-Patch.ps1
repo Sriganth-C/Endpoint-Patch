@@ -50,6 +50,10 @@ $PhpMin = @{ '8.5' = '8.5.12'; '8.4' = '8.4.27'; '8.3' = '8.3.36'; '8.2' = '8.2.
 $PhpVs = @{ '8.5' = 'vs17'; '8.4' = 'vs17'; '8.3' = 'vs16'; '8.2' = 'vs16' }
 $JavaMin = @{ '27' = '27.0.1'; '25' = '25.0.5'; '21' = '21.0.13'; '17' = '17.0.21'; '11' = '11.0.33' }
 $TomcatMin = @{ '11.0' = '11.0.27'; '10.1' = '10.1.61'; '9.0' = '9.0.123' }
+# Python: 21 Oct releases (eMudhra fix in bundled pip/certifi) for 3.13-3.15; 1 Oct CVE releases for 3.11/3.12
+$PyMin = @{ '3.15' = '3.15.1'; '3.14' = '3.14.9'; '3.13' = '3.13.17'; '3.12' = '3.12.15'; '3.11' = '3.11.17' }
+$PyHasInstaller = @('3.13', '3.14', '3.15')        # python.org ships no Windows installers for security-only 3.11 / 3.12
+$MIN_CERTIFI = '2026.10.19'                         # first certifi without the compromised eMudhra / emSign CA
 
 # ---------------- Helpers ----------------
 function Norm($v) { if ("$v" -match '(\d+(\.\d+){1,3})') { return $Matches[1] } return $null }
@@ -84,6 +88,51 @@ foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKL
   }
 }
 function Find-App($pattern) { $r = @(); foreach ($a in $apps) { if ($a.Name -match $pattern) { $r += , $a } }; return , $r }
+
+# Runtimes that another application ships for itself (MySQL Workbench, LibreOffice, VS Code, Electron apps...).
+# Only that application's own update can change them, so they are reported, never patched.
+function Test-InApp($path) {
+  $l = "$path".ToLower()
+  if ($l -match '\\resources\\|\\dependencies\\|\\node_modules\\|\\lib\\python3|\\program\\python-core|\\app-\d|\\[0-9a-f]{16}\\|\\runtimes?\\') { return $true }
+  if ($l -match '\\appdata\\local\\programs\\([^\\]+)\\' -and $Matches[1] -notmatch '^(python|nodejs)') { return $true }
+  if ($l -match '\\program files( \(x86\))?\\([^\\]+)\\' -and $Matches[2] -notmatch '^(python|nodejs)') { return $true }
+  return $false
+}
+# Chrome / Edge download a new version into Application\<version>\ and switch to it on the next browser start
+function Get-StagedVer($dir, $dll) {
+  $best = $null
+  if ($dir -and (Test-Path $dir)) {
+    foreach ($d in (Get-ChildItem $dir | Where-Object { $_.PSIsContainer -and $_.Name -match '^\d+(\.\d+){3}$' })) {
+      if ((Test-Path (Join-Path $d.FullName $dll)) -and (-not $best -or (Test-Min $d.Name $best) -eq $true)) { $best = $d.Name }
+    }
+  }
+  return $best
+}
+# Real Python installs: registered with Windows (PEP 514) or on PATH; skips app-bundled copies and virtual envs
+function Find-Pythons {
+  $list = @(); $seen = @()
+  foreach ($k in 'HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore', 'HKCU:\SOFTWARE\Python\PythonCore') {
+    if (-not (Test-Path $k)) { continue }
+    $scope = 'system'; if ($k -like 'HKCU:*') { $scope = 'user' }
+    foreach ($tag in (Get-ChildItem $k)) {
+      $ipk = Join-Path $tag.PSPath 'InstallPath'
+      if (-not (Test-Path $ipk)) { continue }
+      $ip = "$((Get-ItemProperty $ipk).'(default)')".TrimEnd('\')
+      $exe = Join-Path $ip 'python.exe'
+      if ($ip -and (Test-Path $exe) -and $seen -notcontains $exe.ToLower()) { $seen += $exe.ToLower(); $list += , @{ Exe = $exe; Scope = $scope } }
+    }
+  }
+  foreach ($exe in (WhereAll 'python.exe')) {
+    if ($seen -contains $exe.ToLower() -or (Test-InApp $exe)) { continue }
+    $d = Split-Path $exe
+    if ((Test-Path (Join-Path $d 'pyvenv.cfg')) -or (Test-Path (Join-Path (Split-Path $d) 'pyvenv.cfg'))) { continue }
+    $seen += $exe.ToLower()
+    $scope = 'system'; if ($exe -match '\\Users\\') { $scope = 'user' }
+    $list += , @{ Exe = $exe; Scope = $scope }
+  }
+  return , $list
+}
+function Get-PathOwner($p) { if ("$p" -match '^[A-Za-z]:\\Users\\([^\\]+)\\') { return $Matches[1] } return '' }
 
 # ---------------- Download + verify ----------------
 function Download($url, $file) {
@@ -223,18 +272,21 @@ function Invoke-Scan {
   $v = $null
   foreach ($p in "$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe") { if (-not $v) { $v = FileVer $p } }
   if (-not $v) { $c = Find-App '^Google Chrome$'; if ($c.Count) { $v = $c[0].Version } }
+  $cdir = $null; foreach ($p in "$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application", "$env:LOCALAPPDATA\Google\Chrome\Application") { if (-not $cdir -and (Test-Path "$p\chrome.exe")) { $cdir = $p } }
   if (-not $v) { Add-Row 'Browser' 'Google Chrome' '-' $MIN_CHROME '-' '-' }
   elseif ($legacy) { Add-Row 'Browser' 'Google Chrome' $v $MIN_CHROME 'NO PATCH' 'Chrome 110+ needs Windows 10/11. Remove Chrome or upgrade the OS.' }
+  elseif ((Test-Min $v $MIN_CHROME) -ne $true -and (Test-Min (Get-StagedVer $cdir 'chrome.dll') $MIN_CHROME) -eq $true) { Add-Row 'Browser' 'Google Chrome' "$(Norm $v) (new ready)" $MIN_CHROME 'RESTART' 'Fix downloaded: close and reopen Chrome to finish' }
   else { $s = St (Test-Min $v $MIN_CHROME); $a = '-'; if ($s -eq 'UPDATE') { $a = 'Update Chrome' }; Add-Row 'Browser' 'Google Chrome' $v $MIN_CHROME $s $a 'chrome' }
 
   # Edge
-  $v = $null
-  foreach ($p in "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") { if (-not $v) { $v = FileVer $p } }
+  $v = $null; $edir = $null
+  foreach ($p in "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") { if (-not $v) { $v = FileVer $p; if ($v) { $edir = Split-Path $p } } }
   if (-not $v) { Add-Row 'Browser' 'Microsoft Edge' '-' $MIN_EDGE '-' '-' }
   elseif ($legacy) { Add-Row 'Browser' 'Microsoft Edge' $v $MIN_EDGE 'NO PATCH' 'Edge 110+ needs Windows 10/11.' }
   else {
     $req = $MIN_EDGE; if ((Norm $v) -like '152.*') { $req = $MIN_EDGE_EXT }
-    $s = St (Test-Min $v $req); $a = '-'; if ($s -eq 'UPDATE') { $a = 'Update Edge' }; Add-Row 'Browser' 'Microsoft Edge' $v $req $s $a 'edge'
+    if ((Test-Min $v $req) -ne $true -and (Test-Min (Get-StagedVer $edir 'msedge.dll') $req) -eq $true) { Add-Row 'Browser' 'Microsoft Edge' "$(Norm $v) (new ready)" $req 'RESTART' 'Fix downloaded: close and reopen Edge to finish' }
+    else { $s = St (Test-Min $v $req); $a = '-'; if ($s -eq 'UPDATE') { $a = 'Update Edge' }; Add-Row 'Browser' 'Microsoft Edge' $v $req $s $a 'edge' }
   }
 
   # Firefox (release / ESR)
@@ -296,9 +348,14 @@ function Invoke-Scan {
   }
 
   # Node.js
-  $v = $null; $nodePath = ''
-  $nx = WhereAll 'node.exe'; if ($nx.Count) { $nodePath = $nx[0]; $v = (cmd /c "`"$nodePath`" -v 2>nul") -replace '^v', '' }
-  if (-not $v) { $na = Find-App '^Node\.js'; if ($na.Count) { $v = $na[0].Version } }
+  $v = $null; $nodePath = ''; $inApp = @()
+  foreach ($n in (WhereAll 'node.exe')) {
+    if (Test-InApp $n) { $inApp += $n; continue }          # Node.js shipped inside another app: not ours to patch
+    if (-not $nodePath) { $nodePath = $n }
+  }
+  if ($nodePath) { $v = (cmd /c "`"$nodePath`" -v 2>nul") -replace '^v', '' }
+  if (-not $v) { $na = Find-App '^Node\.js$'; if ($na.Count) { $v = $na[0].Version } }
+  foreach ($n in $inApp) { Add-Row 'Runtime' "Node.js (inside an app) [$n]" ((cmd /c "`"$n`" -v 2>nul") -replace '^v', '') '-' 'IN APP' 'Bundled inside another application: update that application' }
   if (-not $v) { Add-Row 'Runtime' 'Node.js' '-' '22.23.4 / 24.22.1 / 26.12.1' '-' '-' }
   else {
     $major = ((Norm $v) -split '\.')[0]
@@ -347,19 +404,60 @@ function Invoke-Scan {
     } else { Add-Row 'Server' "Apache Tomcat [$($t.Dir)]" $n '9.0.123+' 'MANUAL' 'End-of-life Tomcat: no fix on this branch. Moving to 9.0+ is a major upgrade.' 'manual' }
   }
 
-  # Python: LiteLLM and Pillow
-  $pys = WhereAll 'python.exe'
-  foreach ($pa in (Find-App '^Python 3')) { if ($pa.Location) { $c = Join-Path $pa.Location 'python.exe'; if (Test-Path $c) { $pys += $c } } }
-  $pys = $pys | Sort-Object -Unique
-  if (-not $pys) {
+  # Python runtime, its certifi (eMudhra), LiteLLM and Pillow - real installs only (see Find-Pythons)
+  $pyList = Find-Pythons
+  if (-not $pyList.Count) {
+    Add-Row 'Language' 'Python' '-' '3.14.9 / 3.13.17 / 3.15.1' '-' '-'
     Add-Row 'Supply chain' 'Python: litellm' '-' "not $BAD_LITELLM" '-' '-'
     Add-Row 'Library' 'Python: Pillow' '-' $MIN_PILLOW '-' '-'
   }
-  foreach ($py in $pys) {
+  foreach ($pi in $pyList) {
+    $py = $pi.Exe
+    # Microsoft Store Python: Windows does not let scripts run it from WindowsApps, and Store build numbers
+    # are not python.org versions, so it is reported for an update through the Store
+    if ($py -match '\\WindowsApps\\') {
+      $sb = '?'; if ($py -match 'Python\.(\d+\.\d+)_') { $sb = $Matches[1] }
+      $req = '-'; if ($PyMin.ContainsKey($sb)) { $req = $PyMin[$sb] }
+      Add-Row 'Language' "Python $sb (Microsoft Store)" "$sb (Store)" $req 'CHECK' "Microsoft Store > Library > Get updates (must reach $req)"
+      continue
+    }
     $list = cmd /c "`"$py`" -m pip list --format=freeze 2>nul"
-    $lite = $null; $pil = $null
-    foreach ($l in $list) { if ($l -match '^litellm==(.+)$') { $lite = $Matches[1].Trim() }; if ($l -match '^(?i)pillow==(.+)$') { $pil = $Matches[1].Trim() } }
+    $lite = $null; $pil = $null; $cert = $null
+    foreach ($l in $list) {
+      if ($l -match '^litellm==(.+)$') { $lite = $Matches[1].Trim() }
+      if ($l -match '^(?i)pillow==(.+)$') { $pil = $Matches[1].Trim() }
+      if ($l -match '^(?i)certifi==(.+)$') { $cert = $Matches[1].Trim() }
+    }
     $bad = ($lite -eq $BAD_LITELLM)
+    $owner = Get-PathOwner $py
+    $mine = (-not $owner -or $owner -eq $env:USERNAME)
+    $lp = $py.ToLower()
+
+    # Python itself
+    $pv = Norm (cmd /c "`"$py`" -c `"import sys;print('%d.%d.%d' % sys.version_info[:3])`" 2>nul")
+    $pbr = ($pv -split '\.')[0..1] -join '.'
+    if (-not $pv) { Add-Row 'Language' "Python [$py]" 'unknown' '3.14.9 / 3.13.17' 'CHECK' 'Could not start this Python' }
+    elseif ($bad) { Add-Row 'Language' "Python [$py]" $pv '-' 'COMPROMISED' 'Skipped: this Python is compromised by litellm 1.107.0' }
+    elseif (-not $PyMin.ContainsKey($pbr)) {
+      if ((Test-Min $pv '3.16') -eq $true) { Add-Row 'Language' "Python [$py]" $pv '-' 'OK' '-' }
+      else { Add-Row 'Language' "Python [$py]" $pv '3.13.17+ (supported branch)' 'MANUAL' "Python $pbr is end-of-life: no more fixes. Move to 3.13 or 3.14 (major upgrade, test the apps)." 'manual' }
+    }
+    elseif ((Test-Min $pv $PyMin[$pbr]) -eq $true) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'OK' '-' }
+    elseif ($lp -match '\\uv\\python\\') { Add-Row 'Language' "Python (uv) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by uv: run  uv python install $($PyMin[$pbr])" 'manual' }
+    elseif ($lp -match 'conda|miniforge|mambaforge') { Add-Row 'Language' "Python (conda) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by conda: run  conda install python=$($PyMin[$pbr])" 'manual' }
+    elseif ($lp -match '\\pyenv-win\\') { Add-Row 'Language' "Python (pyenv) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by pyenv: run  pyenv install $($PyMin[$pbr])" 'manual' }
+    elseif ($lp -match '\\pythoncore-') { Add-Row 'Language' "Python (install manager) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by the Python install manager: update $pbr with it (see: py help install)" 'manual' }
+    elseif ($PyHasInstaller -notcontains $pbr) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'NO PATCH' "python.org has no Windows installer for $($PyMin[$pbr]) (source only). Certifi is updated below; for the CVE fixes move to 3.13/3.14." }
+    elseif (-not $mine) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'MANUAL' "Per-user install of ${owner}: run this script while logged on as $owner" 'manual' }
+    else { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'UPDATE' "Install Python $($PyMin[$pbr]) over it (python.org installer)" 'pyinst' "$py|$($PyMin[$pbr])|$($pi.Scope)" }
+
+    # certifi used by pip / requests (the eMudhra fix for every Python branch)
+    $pc = Norm (cmd /c "`"$py`" -c `"import pip._vendor.certifi as c;print(c.__version__)`" 2>nul")
+    $low = $pc; if ($cert -and (-not $low -or (Test-Min $cert $low) -ne $true)) { $low = $cert }
+    if (-not $bad -and $pv -and $low -and (Test-Min $low $MIN_CERTIFI) -ne $true) {
+      if ($mine) { Add-Row 'Certificate' "Python certifi [$py]" $low $MIN_CERTIFI 'UPDATE' 'pip install -U pip certifi (drops the eMudhra CA)' 'certifi' $py }
+      else { Add-Row 'Certificate' "Python certifi [$py]" $low $MIN_CERTIFI 'MANUAL' "Per-user install of ${owner}: run as ${owner}:  python -m pip install -U pip certifi" 'manual' }
+    }
     if ($bad) { Add-Row 'Supply chain' "Python: litellm [$py]" $lite "not $BAD_LITELLM ($GOOD_LITELLM)" 'COMPROMISED' 'Security incident: disconnect from network, report to security, rebuild the machine, rotate all secrets. Not auto-fixed: running Python here re-runs the malware.' }
     elseif ($lite) { Add-Row 'Supply chain' "Python: litellm [$py]" $lite "not $BAD_LITELLM" 'OK' '-' }
     else { Add-Row 'Supply chain' "Python: litellm [$py]" '-' "not $BAD_LITELLM" '-' '-' }
@@ -430,7 +528,7 @@ function Show-Table($title) {
   foreach ($r in $script:rows) {
     $i++
     $c = 'Gray'
-    switch ($r.Status) { 'OK' { $c = 'Green' } 'UPDATE' { $c = 'Red' } 'COMPROMISED' { $c = 'Magenta' } 'MANUAL' { $c = 'Yellow' } 'NO PATCH' { $c = 'DarkYellow' } 'NO FIX YET' { $c = 'DarkYellow' } 'CHECK' { $c = 'Yellow' } }
+    switch ($r.Status) { 'OK' { $c = 'Green' } 'UPDATE' { $c = 'Red' } 'COMPROMISED' { $c = 'Magenta' } 'MANUAL' { $c = 'Yellow' } 'NO PATCH' { $c = 'DarkYellow' } 'NO FIX YET' { $c = 'DarkYellow' } 'CHECK' { $c = 'Yellow' } 'IN APP' { $c = 'DarkGray' } 'RESTART' { $c = 'Yellow' } }
     $soft = $r.Soft; if ($soft.Length -gt 46) { $soft = $soft.Substring(0, 43) + '...' }
     Write-Host ("{0,-3} {1,-17} {2,-46} {3,-18} {4,-34} {5,-11} {6}" -f $i, $r.Type, $soft, $r.Inst, $r.Req, $r.Status, $r.Action) -ForegroundColor $c
   }
@@ -589,24 +687,84 @@ function Remove-Emudhra {
   return "Deleted $n compromised eMudhra certificate(s)."
 }
 
+# Chrome / Edge: each method is tried in turn and the result is checked; a downloaded update that only
+# needs a browser restart counts as installed (the old exe keeps running until the browser is reopened)
+function Get-BrowserVer($dir, $exeName, $dll) {
+  $v = Norm (FileVer (Join-Path $dir $exeName)); $s = Get-StagedVer $dir $dll
+  if ($s -and (-not $v -or (Test-Min $s $v) -eq $true)) { return $s }
+  return $v
+}
+function Wait-BrowserVer($dir, $exeName, $dll, $req, $seconds) {
+  for ($i = 0; $i -lt ($seconds / 5); $i++) { if ((Test-Min (Get-BrowserVer $dir $exeName $dll) $req) -eq $true) { return $true }; Start-Sleep -Seconds 5 }
+  return ((Test-Min (Get-BrowserVer $dir $exeName $dll) $req) -eq $true)
+}
+function Update-Chrome($req) {
+  $dir = $null; foreach ($p in "$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application", "$env:LOCALAPPDATA\Google\Chrome\Application") { if (-not $dir -and (Test-Path "$p\chrome.exe")) { $dir = $p } }
+  foreach ($gu in "${env:ProgramFiles(x86)}\Google\Update\GoogleUpdate.exe", "$env:ProgramFiles\Google\Update\GoogleUpdate.exe", "$env:LOCALAPPDATA\Google\Update\GoogleUpdate.exe") {
+    if (Test-Path $gu) { Run $gu '/ua /installsource scheduler' | Out-Null; break }
+  }
+  if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 120) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') ready. Close and reopen Chrome to finish." }
+  Winget 'Google.Chrome' | Out-Null
+  if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 30) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') installed with winget. Reopen Chrome." }
+  $name = 'googlechromestandaloneenterprise.msi'; if ($is64) { $name = 'googlechromestandaloneenterprise64.msi' }
+  $f = Download "https://dl.google.com/dl/chrome/install/$name" $name
+  if ($f) {
+    $sig = Get-AuthenticodeSignature $f
+    if ("$($sig.Status)" -eq 'Valid' -and "$($sig.SignerCertificate.Subject)" -match 'Google LLC') { Msi $f | Out-Null } else { Log "Chrome MSI signature not valid: $($sig.Status)" }
+  }
+  if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 30) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') installed (Google-signed MSI). Reopen Chrome." }
+  return "FAILED: Chrome is still $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') (needs $req). Update from chrome://settings/help."
+}
+function Update-Edge($req) {
+  $dir = $null; foreach ($p in "${env:ProgramFiles(x86)}\Microsoft\Edge\Application", "$env:ProgramFiles\Microsoft\Edge\Application") { if (-not $dir -and (Test-Path "$p\msedge.exe")) { $dir = $p } }
+  foreach ($eu in "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe", "$env:ProgramFiles\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe") {
+    if (Test-Path $eu) { Run $eu '/ua /installsource scheduler' | Out-Null; break }
+  }
+  if (Wait-BrowserVer $dir 'msedge.exe' 'msedge.dll' $req 120) { return "Edge $(Get-BrowserVer $dir 'msedge.exe' 'msedge.dll') ready. Close and reopen Edge to finish." }
+  Winget 'Microsoft.Edge' | Out-Null
+  if (Wait-BrowserVer $dir 'msedge.exe' 'msedge.dll' $req 30) { return "Edge $(Get-BrowserVer $dir 'msedge.exe' 'msedge.dll') installed with winget. Reopen Edge." }
+  # Microsoft's enterprise MSI, listed with its SHA-256 by Microsoft's own release API
+  if (Get-Command Invoke-RestMethod) {
+    $ea = 'x64'; if ($arch -eq 'x86') { $ea = 'x86' }; if ($arch -eq 'arm64') { $ea = 'arm64' }
+    $api = Invoke-RestMethod 'https://edgeupdates.microsoft.com/api/products'
+    $rel = $api | Where-Object { $_.Product -eq 'Stable' } | ForEach-Object { $_.Releases } | Where-Object { $_.Platform -eq 'Windows' -and $_.Architecture -eq $ea } | Sort-Object { [datetime]$_.PublishedTime } -Descending | Select-Object -First 1
+    $art = $rel.Artifacts | Where-Object { $_.ArtifactName -eq 'msi' } | Select-Object -First 1
+    if ($art -and $art.Location) {
+      $f = Download $art.Location "MicrosoftEdgeEnterprise-$($rel.ProductVersion)-$ea.msi"
+      if ($f -and (Get-Sha256 $f) -eq "$($art.Hash)".ToLower()) { Msi $f | Out-Null } else { Log 'Edge MSI checksum mismatch or download failed' }
+    }
+  }
+  if (Wait-BrowserVer $dir 'msedge.exe' 'msedge.dll' $req 30) { return "Edge $(Get-BrowserVer $dir 'msedge.exe' 'msedge.dll') installed (Microsoft MSI, checksum checked). Reopen Edge." }
+  return "FAILED: Edge is still $(Get-BrowserVer $dir 'msedge.exe' 'msedge.dll') (needs $req). Update from edge://settings/help."
+}
+
+# Python: official python.org installer for the same branch, run over the existing install (same folder, same scope)
+function Update-Python($exe, $target, $scope) {
+  $bits = cmd /c "`"$exe`" -c `"import sys,platform;print(platform.machine(), sys.maxsize > 2**32)`" 2>nul"
+  $suffix = ''; if ("$bits" -match 'True') { $suffix = '-amd64'; if ("$bits" -match 'ARM64') { $suffix = '-arm64' } }
+  $name = "python-$target$suffix.exe"
+  $f = Get-Patch $name "https://www.python.org/ftp/python/$target/$name"
+  if (-not $f) { return "FAILED: could not download a verified $name" }
+  $all = 0; if ($scope -eq 'system') { $all = 1 }
+  $dir = Split-Path $exe
+  Get-Wmi Win32_Process | Where-Object { "$($_.ExecutablePath)" -like "$dir\*" } | ForEach-Object { Log "Stop $($_.Name) $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force }
+  $code = Run $f "/quiet InstallAllUsers=$all TargetDir=`"$dir`" /log `"$dl\python-$target-install.log`""
+  $nv = Norm (cmd /c "`"$exe`" -c `"import sys;print('%d.%d.%d' % sys.version_info[:3])`" 2>nul")
+  if ($nv -eq $target) { return "Python $target installed in $dir (includes pip with certifi $MIN_CERTIFI)." }
+  return "FAILED: installer exit $code, Python is still $nv. Log: $dl\python-$target-install.log"
+}
+
 function Fix-Row($r) {
   switch ($r.Fix) {
-    'chrome' {
-      if (Winget 'Google.Chrome') { return 'Updated with winget. Relaunch Chrome.' }
-      foreach ($gu in "${env:ProgramFiles(x86)}\Google\Update\GoogleUpdate.exe", "$env:ProgramFiles\Google\Update\GoogleUpdate.exe", "$env:LOCALAPPDATA\Google\Update\GoogleUpdate.exe") {
-        if (Test-Path $gu) { Run $gu '/ua /installsource scheduler' | Out-Null; return 'Google Update triggered. Relaunch Chrome.' }
-      }
-      $name = 'googlechromestandaloneenterprise.msi'; if ($is64) { $name = 'googlechromestandaloneenterprise64.msi' }
-      $f = Download "https://dl.google.com/dl/chrome/install/$name" $name
-      if ($f -and (Msi $f)) { return 'Installed latest Chrome MSI. Relaunch Chrome.' }
-      return 'FAILED: update Chrome from chrome://settings/help'
-    }
-    'edge' {
-      foreach ($eu in "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe", "$env:ProgramFiles\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe") {
-        if (Test-Path $eu) { Run $eu '/ua /installsource scheduler' | Out-Null; return 'Edge Update triggered. Relaunch Edge.' }
-      }
-      if (Winget 'Microsoft.Edge') { return 'Updated with winget. Relaunch Edge.' }
-      return 'FAILED: update Edge from edge://settings/help'
+    'chrome' { return (Update-Chrome $r.Req) }
+    'edge' { return (Update-Edge $r.Req) }
+    'pyinst' { $p = $r.Arg -split '\|'; return (Update-Python $p[0] $p[1] $p[2]) }
+    'certifi' {
+      Log "pip upgrade pip certifi on $($r.Arg)"
+      cmd /c "`"$($r.Arg)`" -m pip install -U pip certifi --disable-pip-version-check >> `"$logFile`" 2>&1"
+      $c = Norm (cmd /c "`"$($r.Arg)`" -c `"import certifi;print(certifi.__version__)`" 2>nul")
+      if ($LASTEXITCODE -eq 0 -and (Test-Min $c $MIN_CERTIFI) -eq $true) { return "pip and certifi $c installed (eMudhra CA removed)." }
+      return 'FAILED: pip could not update certifi (no write access or no pip). See log.'
     }
     'firefox' { return (Update-Firefox $r.Arg $r.Req) }
     'node' {
@@ -672,6 +830,8 @@ $waiting = @($script:rows | Where-Object { $_.Status -eq 'NO FIX YET' })
 Write-Host ''
 Write-Host ("Can update automatically: {0}   Need manual action: {1}   Fix not released by vendor yet: {2}" -f $todo.Count, $manual.Count, $waiting.Count)
 if ($waiting.Count) { Write-Host 'NO FIX YET = you already have the newest build this vendor offers. Run the script again in a few days.' -ForegroundColor DarkYellow }
+if (@($script:rows | Where-Object { $_.Status -eq 'IN APP' }).Count) { Write-Host 'IN APP = a runtime bundled inside another application (e.g. MySQL Workbench, LibreOffice). Only updating that application changes it.' -ForegroundColor DarkGray }
+if (@($script:rows | Where-Object { $_.Status -eq 'RESTART' }).Count) { Write-Host 'RESTART = the fixed browser version is already downloaded. Close and reopen that browser to finish.' -ForegroundColor Yellow }
 
 if ($ScanOnly -or $todo.Count -eq 0) { Write-Host "Report: $csvFile"; Log 'End (no updates run)'; return }
 if (-not $isAdmin) { Write-Host 'Run PowerShell as Administrator to install updates.' -ForegroundColor Yellow; Write-Host "Report: $csvFile"; return }
