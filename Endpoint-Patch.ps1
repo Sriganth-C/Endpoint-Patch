@@ -10,8 +10,10 @@
        official download site. Anything replaced in place is backed up first and restored on failure.
     3. Scans again and shows the final result. Saves a CSV report and a log.
 
-  One-line run (Administrator PowerShell):
-    Start-BitsTransfer https://raw.githubusercontent.com/Sriganth-C/Endpoint-Patch/windows/Endpoint-Patch.ps1 $env:TEMP\Endpoint-Patch.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\Endpoint-Patch.ps1
+  One-line run (Administrator PowerShell, Windows 10 / 11 / Server 2019+):
+    curl.exe -fsSL -o $env:TEMP\Endpoint-Patch.ps1 https://raw.githubusercontent.com/Sriganth-C/Endpoint-Patch/windows/Endpoint-Patch.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\Endpoint-Patch.ps1
+  Windows 7 / 8.1 (no curl.exe):
+    certutil -urlcache -split -f https://raw.githubusercontent.com/Sriganth-C/Endpoint-Patch/windows/Endpoint-Patch.ps1 %TEMP%\Endpoint-Patch.ps1 & powershell -ExecutionPolicy Bypass -File %TEMP%\Endpoint-Patch.ps1   (Command Prompt as Administrator)
 
   Options:  -ScanOnly   report only, change nothing
             -Yes        update without asking (for Intune / GPO / SCCM)
@@ -201,10 +203,15 @@ function Download($url, $file) {
   $out = Join-Path $dl $file
   if (Test-Path $out) { Remove-Item $out -Force }
   Log "Download $url"
-  # TLS 1.2 for Invoke-WebRequest. Setting .NET properties is blocked in Constrained Language Mode
-  # (company-locked PowerShell), so only try it in full mode; BITS and certutil below use TLS 1.2 anyway.
-  if ($FullLang) { try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch { } }
-  if (Get-Command Invoke-WebRequest) { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing }
+  # 1. curl.exe (built into Windows 10/11, System32): works in any session, including "Run as" admin windows
+  $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+  if (Test-Path $curl) { cmd /c "`"$curl`" -fsSL --retry 3 --max-time 900 -o `"$out`" `"$url`" >nul 2>&1"; if ($LASTEXITCODE -ne 0 -and (Test-Path $out)) { Remove-Item $out -Force } }
+  # 2. Invoke-WebRequest. TLS 1.2 can only be forced in full language mode (blocked on company-locked PowerShell)
+  if (-not (Test-Path $out)) {
+    if ($FullLang) { try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch { } }
+    if (Get-Command Invoke-WebRequest) { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing }
+  }
+  # 3. BITS (fails with 0x800704DD when the window runs as a different user than the one logged on)
   if (-not (Test-Path $out)) { Import-Module BitsTransfer; Start-BitsTransfer -Source $url -Destination $out }
   if (-not (Test-Path $out)) { cmd /c "certutil -urlcache -split -f `"$url`" `"$out`" >nul 2>&1" }
   if ((Test-Path $out) -and (Get-Item $out).Length -gt 0) { return $out }
