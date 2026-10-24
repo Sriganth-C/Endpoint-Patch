@@ -50,6 +50,11 @@ node_min()   { case "$1" in 22) echo 22.23.4;; 24) echo 24.22.1;; 26) echo 26.12
 php_min()    { case "$1" in 8.5) echo 8.5.12;; 8.4) echo 8.4.27;; 8.3) echo 8.3.36;; 8.2) echo 8.2.35;; esac; }
 java_min()   { case "$1" in 27) echo 27.0.1;; 25) echo 25.0.5;; 21) echo 21.0.13;; 17) echo 17.0.21;; 11) echo 11.0.33;; esac; }
 tomcat_min() { case "$1" in 11.0) echo 11.0.27;; 10.1) echo 10.1.61;; 9.0) echo 9.0.123;; esac; }
+# Python: 21 Oct releases (eMudhra fix) for 3.13-3.15; 1 Oct CVE releases for 3.11/3.12. Distros often backport instead.
+py_min()     { case "$1" in 3.15) echo 3.15.1;; 3.14) echo 3.14.9;; 3.13) echo 3.13.17;; 3.12) echo 3.12.15;; 3.11) echo 3.11.17;; esac; }
+MIN_CERTIFI=2026.10.19      # first certifi without the compromised eMudhra / emSign CA
+# Windows drives and WSLg folders mounted into WSL are not Linux installs: never scan or patch them
+not_linux() { case "$1" in /mnt/*) return 0;; esac; return 1; }
 gitlab_min() { case "$1" in 19.5) echo 19.5.1;; 19.4) echo 19.4.3;; 19.3) echo 19.3.6;; 19.2) echo 19.2.9;; 19.1) echo 19.1.9;; 19.0) echo 19.0.10;; 18.11) echo 18.11.13;; esac; }
 
 # ---------------- Helpers ----------------
@@ -196,8 +201,14 @@ scan() {
     local fpkg=firefox; pkg_installed firefox-esr && fpkg=firefox-esr
     local req=$MIN_FF; case "$v" in 153.*) req=$MIN_FF_ESR153;; 115.*) req=$MIN_FF_ESR115;; esac
     local fix=pkg; command -v snap >/dev/null 2>&1 && snap list firefox >/dev/null 2>&1 && fix=snap
+    local savail=""
+    if [ "$fix" = snap ]; then   # version the snap store offers on the channel this machine follows
+      local chan; chan=$(snap info firefox 2>/dev/null | awk '/^tracking:/{print $2}'); chan=${chan:-latest/stable}
+      savail=$(norm "$(snap info firefox 2>/dev/null | grep -E "^  $chan:" | awk '{print $2}')")
+    fi
     if ver_ge "$v" "$req"; then row Browser "Mozilla Firefox" "$v" "$req" OK "-"
-    elif [ "$fix" = snap ]; then row Browser "Mozilla Firefox (snap)" "$v" "$req" UPDATE "snap refresh firefox" snap firefox
+    elif [ "$fix" = snap ] && [ -n "$savail" ] && ! ver_ge "$savail" "$req"; then row Browser "Mozilla Firefox (snap)" "$v" "$req" "NO FIX YET" "Snap store still offers $savail on $chan. Re-run later."
+    elif [ "$fix" = snap ]; then row Browser "Mozilla Firefox (snap)" "$v" "$req" UPDATE "snap refresh firefox (store has ${savail:-a newer build})" snap firefox
     else pkg_row Browser "Mozilla Firefox" "$v" "$req" $fpkg "Upgrade $fpkg" pkg "$fpkg"; fi
   else row Browser "Mozilla Firefox" "-" $MIN_FF "-" "-"; fi
 
@@ -205,6 +216,7 @@ scan() {
   local javas=() j
   for j in $(command -v -a java 2>/dev/null) /usr/lib/jvm/*/bin/java /usr/java/*/bin/java /opt/*/bin/java /opt/java/*/bin/java; do
     case "$j" in *.bak-[0-9]*) continue;; esac          # skip this script's own backups
+    not_linux "$j" && continue
     [ -x "$j" ] && javas+=("$(readlink -f "$j")")
   done
   if [ ${#javas[@]} -eq 0 ]; then row Runtime "Java (JDK / JRE)" "-" "21.0.13 / 17.0.21 / 11.0.33 / 8u511" "-" "-"; fi
@@ -228,8 +240,10 @@ scan() {
   done
 
   # Node.js
-  if command -v node >/dev/null 2>&1; then
-    local nb; nb=$(readlink -f "$(command -v node)"); v=$(norm "$(node -v)"); local maj=${v%%.*}; local req; req=$(node_min "$maj")
+  local nb="" n
+  for n in $(command -v -a node 2>/dev/null); do not_linux "$n" && continue; nb=$(readlink -f "$n"); break; done
+  if [ -n "$nb" ]; then
+    v=$(norm "$("$nb" -v)"); local maj=${v%%.*}; local req; req=$(node_min "$maj")
     local np; np=$(pkg_of "$nb")
     if [ -n "$req" ] && ver_ge "$v" "$req"; then row Runtime "Node.js [$nb]" "$v" "$req" OK "-"
     elif [ -z "$req" ]; then row Runtime "Node.js [$nb]" "$v" "22.23.4 / 24.22.1 / 26.12.1" MANUAL "End-of-life Node.js: move to 22, 24 or 26 (major version change)."
@@ -242,6 +256,7 @@ scan() {
   # PHP (every php binary)
   local phps=() b
   for b in $(command -v -a php 2>/dev/null) /usr/bin/php[0-9]* /usr/bin/php[0-9].[0-9] /opt/remi/*/root/usr/bin/php /usr/local/bin/php /usr/local/lsws/lsphp*/bin/php; do
+    not_linux "$b" && continue
     [ -x "$b" ] && phps+=("$(readlink -f "$b")")
   done
   if [ ${#phps[@]} -eq 0 ]; then row Language "PHP" "-" "8.5.12 / 8.4.27 / 8.3.36 / 8.2.35" "-" "-"; fi
@@ -279,10 +294,17 @@ scan() {
     else row Server "GitLab ($gp)" "$v" "$req" UPDATE "Install $gp $req (same minor line)" gitlab "$gp:$req"; fi
   else row Server "GitLab (self-managed)" "-" "19.5.1 / 19.4.3 / ... / 18.11.13" "-" "-"; fi
 
-  # Python: LiteLLM and Pillow
+  # Python runtime, its certifi (eMudhra), LiteLLM and Pillow
   local pys=() py
-  for py in $(command -v -a python3 python 2>/dev/null); do pys+=("$(readlink -f "$py")"); done
+  for py in $(command -v -a python3 python 2>/dev/null) /usr/bin/python3.[0-9]* /usr/local/bin/python3.[0-9]*; do
+    not_linux "$py" && continue
+    case "$py" in *-config|*m-config) continue;; esac
+    [ -x "$py" ] || continue
+    [ -f "$(dirname "$(dirname "$py")")/pyvenv.cfg" ] && continue        # virtual environments follow their base Python
+    pys+=("$(readlink -f "$py")")
+  done
   if [ ${#pys[@]} -eq 0 ]; then
+    row Language "Python" "-" "3.14.9 / 3.13.17 / 3.15.1" "-" "-"
     row "Supply chain" "Python: litellm" "-" "not $BAD_LITELLM" "-" "-"; row Library "Python: Pillow" "-" $MIN_PILLOW "-" "-"
   fi
   for py in $(printf '%s\n' "${pys[@]}" | sort -u); do
@@ -290,6 +312,39 @@ scan() {
     list=$("$py" -m pip list --format=freeze 2>/dev/null)
     lv=$(echo "$list" | grep -i '^litellm==' | cut -d= -f3)
     pv=$(echo "$list" | grep -i '^pillow==' | cut -d= -f3)
+
+    # Python itself
+    local pyv pbr preq ppk
+    pyv=$(norm "$("$py" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)")
+    pbr=$(branch "$pyv"); preq=$(py_min "$pbr"); ppk=$(pkg_of "$py")
+    if [ -z "$pyv" ]; then row Language "Python [$py]" unknown "3.14.9 / 3.13.17" CHECK "Could not start this Python"
+    elif [ "$lv" = "$BAD_LITELLM" ]; then row Language "Python [$py]" "$pyv" "-" COMPROMISED "Skipped: this Python is compromised by litellm $BAD_LITELLM"
+    elif [ -z "$preq" ]; then
+      if ver_ge "$pyv" 3.16; then row Language "Python [$py]" "$pyv" "-" OK "-"
+      else row Language "Python [$py]" "$pyv" "3.13.17+ (supported branch)" MANUAL "Python $pbr is end-of-life: no more fixes. Move to 3.13 or 3.14 (major upgrade, test the apps)."; fi
+    elif ver_ge "$pyv" "$preq"; then row Language "Python [$py]" "$pyv" "$preq" OK "-"
+    else
+      case "$py" in
+        */uv/python/*) row Language "Python (uv) [$py]" "$pyv" "$preq" MANUAL "Managed by uv: as $(owner "$py") run  uv python install $preq";;
+        */.pyenv/*) row Language "Python (pyenv) [$py]" "$pyv" "$preq" MANUAL "Managed by pyenv: as $(owner "$py") run  pyenv install $preq";;
+        *conda*|*miniforge*|*mambaforge*) row Language "Python (conda) [$py]" "$pyv" "$preq" MANUAL "Managed by conda: run  conda install python=$preq";;
+        *) if [ -n "$ppk" ]; then pkg_row Language "Python [$py]" "$pyv" "$preq" "$ppk" "Upgrade $ppk" pkg "$ppk"
+           else row Language "Python [$py]" "$pyv" "$preq" MANUAL "Built from source: rebuild Python $preq from python.org"; fi;;
+      esac
+    fi
+
+    # certifi (CA list used by pip / requests). Distro builds that point certifi at the system CA store are fixed by ca-certificates.
+    local cv cwhere
+    cv=$(norm "$("$py" -c 'import certifi;print(certifi.__version__)' 2>/dev/null)")
+    cwhere=$("$py" -c 'import certifi;print(certifi.where())' 2>/dev/null)
+    if [ -n "$cv" ] && [ "$lv" != "$BAD_LITELLM" ] && ! ver_ge "$cv" "$MIN_CERTIFI"; then
+      case "$cwhere" in
+        /etc/ssl/*|/etc/pki/*) row Certificate "Python certifi [$py]" "$cv (system CA)" "$MIN_CERTIFI" OK "Uses the system CA store";;
+        *) local cpk; cpk=$(pkg_of "$cwhere")
+           if [ -n "$cpk" ]; then pkg_row Certificate "Python certifi [$py]" "$cv" "$MIN_CERTIFI" "$cpk" "Upgrade $cpk" pkg "$cpk"
+           else row Certificate "Python certifi [$py]" "$cv" "$MIN_CERTIFI" UPDATE "pip install -U certifi (drops the eMudhra CA)" certifi "$py"; fi;;
+      esac
+    fi
     if [ "$lv" = "$BAD_LITELLM" ]; then row "Supply chain" "Python: litellm [$py]" "$lv" "not $BAD_LITELLM ($GOOD_LITELLM)" COMPROMISED "Security incident: disconnect, report, rebuild the machine, rotate all secrets. Not auto-fixed: running Python here re-runs the malware."
     elif [ -n "$lv" ]; then row "Supply chain" "Python: litellm [$py]" "$lv" "not $BAD_LITELLM" OK "-"
     else row "Supply chain" "Python: litellm [$py]" "-" "not $BAD_LITELLM" "-" "-"; fi
@@ -468,6 +523,11 @@ fix_row() { # fix arg
       if "$2" -m pip install --upgrade "pillow>=$MIN_PILLOW" >> "$LOG" 2>&1; then echo "Pillow upgraded."
       elif grep -q externally-managed "$LOG" && "$2" -m pip install --upgrade --break-system-packages "pillow>=$MIN_PILLOW" >> "$LOG" 2>&1; then echo "Pillow upgraded (pip-managed copy, same way it was installed)."
       else echo "FAILED: pip could not upgrade Pillow (old Python?). See log."; fi;;
+    certifi)
+      local u; u=$(owner "$2"); local run=""; [ "$u" != root ] && run="sudo -u $u -H"
+      if $run "$2" -m pip install -U certifi >> "$LOG" 2>&1 || { grep -q externally-managed "$LOG" && $run "$2" -m pip install -U --break-system-packages certifi >> "$LOG" 2>&1; }; then
+        echo "certifi $(norm "$("$2" -c 'import certifi;print(certifi.__version__)' 2>/dev/null)") installed (eMudhra CA removed)."
+      else echo "FAILED: pip could not update certifi. See log."; fi;;
     ca)
       pkg_upgrade "$2"
       local f moved=0 keep="/root/emudhra-removed-$STAMP"
