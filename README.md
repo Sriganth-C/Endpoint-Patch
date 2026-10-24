@@ -12,11 +12,19 @@ Patch packages that the scripts install directly (PHP, Tomcat, OVHcloud CLI, Tem
 
 ## Run it — one command
 
-**Windows** (open PowerShell as Administrator):
+**Windows 10 / 11 / Server 2019+** (open PowerShell as Administrator):
 
 ```powershell
-Start-BitsTransfer https://raw.githubusercontent.com/Sriganth-C/Endpoint-Patch/windows/Endpoint-Patch.ps1 $env:TEMP\Endpoint-Patch.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\Endpoint-Patch.ps1
+curl.exe -fsSL -o $env:TEMP\Endpoint-Patch.ps1 https://raw.githubusercontent.com/Sriganth-C/Endpoint-Patch/windows/Endpoint-Patch.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\Endpoint-Patch.ps1
 ```
+
+**Windows 7 / 8.1** (no curl.exe; open Command Prompt as Administrator):
+
+```bat
+certutil -urlcache -split -f https://raw.githubusercontent.com/Sriganth-C/Endpoint-Patch/windows/Endpoint-Patch.ps1 %TEMP%\Endpoint-Patch.ps1 & powershell -ExecutionPolicy Bypass -File %TEMP%\Endpoint-Patch.ps1
+```
+
+`curl.exe` is used instead of `Start-BitsTransfer` because BITS refuses to download (error 0x800704DD) when the admin window runs as a different account than the one logged on.
 
 **Linux:**
 
