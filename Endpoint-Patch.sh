@@ -15,12 +15,18 @@
 # Options (add after the command above as:  ... )" endpoint-patch --scan-only ):
 #   --scan-only     report only, change nothing
 #   --yes           update without asking
+#   --quick         skip the deep scan of all local filesystems
 #   --projects DIR  also check and update Next.js in project folders
+#
+# Deep scan (default): every local filesystem is searched once for the checklist software (Java, Node.js, PHP,
+# Tomcat, OVHcloud CLI, bundled Chromium, Next.js, and the LiteLLM / Pillow / certifi packages), so tarball
+# installs, virtual environments and copies bundled inside other applications are found too.
 
-SCAN_ONLY=0; YES=0; PROJECTS=""
+SCAN_ONLY=0; YES=0; QUICK=0; PROJECTS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --scan-only) SCAN_ONLY=1;;
+    --quick) QUICK=1;;
     --yes|-y) YES=1;;
     --projects) PROJECTS="$2"; shift;;
     *) echo "Unknown option: $1"; exit 1;;
@@ -194,6 +200,58 @@ java_tar_row() { # javabin installed required major
   else row Runtime "Java [$home]" "$2" "$3" MANUAL "Tarball JDK from ${vendor:-an unknown vendor}. Install Java $3 from that vendor."; fi
 }
 
+# ---------------- Deep scan: every local filesystem ----------------
+# One find pass per local filesystem (virtual, network, Windows-mounted and container storage skipped).
+# Only paths are collected here.
+DEEP=""
+deep_scan() {
+  [ "$QUICK" -eq 1 ] && return
+  echo "Deep scan of all local filesystems - this takes a few minutes..."
+  local mnts m; mnts=$(findmnt -rn -o TARGET -t ext2,ext3,ext4,xfs,btrfs,zfs,f2fs,jfs 2>/dev/null); [ -z "$mnts" ] && mnts=/
+  DEEP=$(for m in $mnts; do
+      find "$m" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /snap -o -path /mnt -o -path /media \
+          -o -path /var/lib/docker -o -path /var/lib/containerd -o -path /tmp -o -path /var/tmp -o -name '*.bak-[0-9]*' \) -prune \
+        -o -type f \( -name java -o -name node -o -name php -o -name catalina.jar -o -name next-server.js -o -name ovhcloud -o -name chrome \) -print \
+        -o -type d \( -iname 'pillow-*.dist-info' -o -name 'litellm-*.dist-info' -o -name 'certifi-*.dist-info' \) -print 2>/dev/null
+    done | sort -u)
+  log "deep scan: $(printf '%s\n' "$DEEP" | grep -c .) paths"
+}
+deep() { [ -n "$DEEP" ] && printf '%s\n' "$DEEP" | grep -E "$1"; }
+is_elf() { [ -f "$1" ] && [ "$(head -c4 "$1" 2>/dev/null | tr -d '\0')" = "$(printf '\177ELF')" ]; }
+
+# A copy shipped inside another application (IDE, Playwright, SonarQube, VS Code server...) can only be changed
+# by updating that application. Prints its name, or nothing for a standalone install.
+app_of() {
+  local p="$1"
+  case "$p" in /usr/lib/jvm/*|/usr/java/*|/usr/bin/*|/usr/local/bin/*) return;; esac
+  case "$p" in
+    */node_modules/*|*/site-packages/*|*/dist-packages/*|*/ms-playwright*|*/.cache/*|*/.vscode-server/*|*/.cursor-server/*|*/resources/*|*/jbr/*|*/jre/bin/*|*/.sonar/*|*/JetBrains/*|*/android-studio/*|*/puppeteer/*|*/burpbrowser/*) ;;
+    *) return;;
+  esac
+  if [[ "$p" =~ ^(.+)/lib/python3[^/]*/(site|dist)-packages/([^/]+)/ ]]; then echo "Python package '${BASH_REMATCH[3]}' in ${BASH_REMATCH[1]}"; return; fi
+  if [[ "$p" =~ /(ms-playwright[^/]*|\.sonar|\.vscode-server|\.cursor-server|puppeteer)/ ]]; then echo "${BASH_REMATCH[1]}"; return; fi
+  if [[ "$p" =~ ^/(opt|usr/share|usr/lib|usr/local)/([^/]+)/ ]]; then echo "${BASH_REMATCH[2]}"; return; fi
+  if [[ "$p" =~ ^(/home/[^/]+|/root)/([^/]+)/ ]]; then echo "${BASH_REMATCH[2]}"; return; fi
+  echo "another application"
+}
+inapp_row() { # type product path version required
+  local app; app=$(app_of "$3"); [ -z "$app" ] && app="another application"
+  if [ -n "$5" ] && [ -n "$4" ] && ver_ge "$4" "$5"; then row "$1" "$2 in $app [$3]" "$4" "$5" OK "-"
+  elif [ -z "$5" ]; then row "$1" "$2 in $app [$3]" "${4:-?}" "supported version" "IN APP" "End-of-life $2 bundled in $app. Update or remove $app."
+  else row "$1" "$2 in $app [$3]" "${4:-?}" "$5" "IN APP" "Bundled in $app: update $app to a release that ships $2 $5 or newer"; fi
+}
+# Java version and required version from a Java home's "release" file
+java_rel() { # home -> "version|required"
+  local v="" req=""
+  [ -f "$1/release" ] && v=$(sed -n 's/^JAVA_VERSION="\([^"]*\)".*/\1/p' "$1/release" | head -n1)
+  case "$v" in
+    1.8.0_*) v="8.0.$(echo "${v#1.8.0_}" | grep -oE '^[0-9]+')"; req=8.0.511;;
+    "") ;;
+    *) [[ "$v" =~ ^[0-9]+$ ]] && v="$v.0.0"; req=$(java_min "${v%%.*}");;
+  esac
+  echo "$v|$req"
+}
+
 # ---------------- Browsers ----------------
 pkg_ver() { # installed version of a package, empty if not installed
   case "$PM" in
@@ -279,10 +337,21 @@ scan() {
   browser_rows Browser "Google Chrome" $MIN_CHROME "google-chrome-stable google-chrome" "" com.google.Chrome /opt/google/chrome/chrome
   browser_rows Browser "Microsoft Edge" $MIN_EDGE "microsoft-edge-stable microsoft-edge" "" com.microsoft.Edge /opt/microsoft/msedge/msedge
   browser_rows Browser "Mozilla Firefox" $MIN_FF "firefox-esr firefox" firefox org.mozilla.firefox ""
+  # Deep scan: Chromium bundled in other applications (Playwright, Puppeteer, Electron tools...), read as its owner
+  local cb
+  while IFS= read -r cb; do
+    [ -n "$cb" ] || continue; not_linux "$cb" && continue
+    case "$cb" in /opt/google/chrome/*|/opt/microsoft/msedge/*) continue;; esac
+    is_elf "$cb" || continue
+    v=$(norm "$(runbin "$cb" --version 2>/dev/null)")
+    if [ -n "$(app_of "$cb")" ]; then inapp_row Browser "Chromium" "$cb" "$v" $MIN_CHROME
+    elif [ -n "$v" ] && ver_ge "$v" $MIN_CHROME; then row Browser "Chrome/Chromium copy [$cb]" "$v" $MIN_CHROME OK "-"
+    else row Browser "Chrome/Chromium copy [$cb]" "${v:-?}" $MIN_CHROME MANUAL "Unpacked copy without an updater: delete it or replace it with a current build"; fi
+  done < <(deep '/chrome$')
 
   # Java (every JVM)
   local javas=() j
-  for j in $(type -aP java 2>/dev/null) /usr/lib/jvm/*/bin/java /usr/java/*/bin/java /opt/*/bin/java /opt/java/*/bin/java; do
+  for j in $(type -aP java 2>/dev/null) /usr/lib/jvm/*/bin/java /usr/java/*/bin/java /opt/*/bin/java /opt/java/*/bin/java $(deep '/bin/java$'); do
     case "$j" in *.bak-[0-9]*) continue;; esac          # skip this script's own backups
     not_linux "$j" && continue
     [ -x "$j" ] && javas+=("$(readlink -f "$j")")
@@ -290,6 +359,10 @@ scan() {
   if [ ${#javas[@]} -eq 0 ]; then row Runtime "Java (JDK / JRE)" "-" "21.0.13 / 17.0.21 / 11.0.33 / 8u511" "-" "-"; fi
   for j in $(printf '%s\n' "${javas[@]}" | sort -u); do
     case "$j" in */jre/bin/java) [ -x "${j%/jre/bin/java}/bin/java" ] && continue;; esac
+    if [ -n "$(app_of "$j")" ]; then         # Java runtime bundled in an IDE / tool: version from its release file
+      local jr; jr=$(java_rel "$(dirname "$(dirname "$j")")")
+      inapp_row Runtime "Java" "$(dirname "$(dirname "$j")")" "${jr%%|*}" "${jr##*|}"; continue
+    fi
     local raw; raw=$(runbin "$j" -version 2>&1 | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
     local jp; jp=$(pkg_of "$j")
     case "$raw" in
@@ -336,12 +409,29 @@ scan() {
       else row Runtime "Node.js (nvm, user $nu)" "$nv" "$req" UPDATE "nvm install $req (as $nu)" nvm "$nu|$req|0"; fi
     done
   done
+  # Deep scan: other Node.js binaries (tarball installs, Node bundled in tools such as VS Code server, Playwright)
+  local dn dv dreq dp
+  while IFS= read -r dn; do
+    [ -n "$dn" ] || continue; not_linux "$dn" && continue
+    dn=$(readlink -f "$dn"); [ "$dn" = "$nb" ] && continue
+    case "$dn" in */.nvm/versions/node/*) continue;; esac
+    is_elf "$dn" || continue
+    nany=1
+    dv=$(norm "$(runbin "$dn" -v 2>/dev/null)"); dreq=$(node_min "${dv%%.*}"); dp=$(pkg_of "$dn")
+    if [ -n "$(app_of "$dn")" ]; then inapp_row Runtime "Node.js" "$dn" "$dv" "$dreq"
+    elif [ -n "$dreq" ] && ver_ge "$dv" "$dreq"; then row Runtime "Node.js [$dn]" "$dv" "$dreq" OK "-"
+    elif [ -z "$dreq" ]; then row Runtime "Node.js [$dn]" "${dv:-?}" "22.23.4 / 24.22.1 / 26.12.1" MANUAL "End-of-life Node.js: move to 22, 24 or 26 (major version change)."
+    elif [ -n "$dp" ]; then pkg_row Runtime "Node.js [$dn]" "$dv" "$dreq" "$dp" "Upgrade $dp" pkg "$dp"
+    elif [ "$dn" = /usr/local/bin/node ]; then row Runtime "Node.js [$dn]" "$dv" "$dreq" UPDATE "Install official Node.js $dreq tarball into /usr/local" nodetar "$dreq"
+    else row Runtime "Node.js [$dn]" "$dv" "$dreq" MANUAL "Unpacked Node.js. As $(owner "$dn"), replace it with the official node-v$dreq tarball"; fi
+  done < <(deep '/node$')
   [ -z "$nb" ] && [ $nany -eq 0 ] && row Runtime "Node.js" "-" "22.23.4 / 24.22.1 / 26.12.1" "-" "-"
 
   # PHP (every php binary)
   local phps=() b
-  for b in $(type -aP php 2>/dev/null) /usr/bin/php[0-9]* /usr/bin/php[0-9].[0-9] /opt/remi/*/root/usr/bin/php /usr/local/bin/php /usr/local/lsws/lsphp*/bin/php; do
+  for b in $(type -aP php 2>/dev/null) /usr/bin/php[0-9]* /usr/bin/php[0-9].[0-9] /opt/remi/*/root/usr/bin/php /usr/local/bin/php /usr/local/lsws/lsphp*/bin/php $(deep '/bin/php$'); do
     not_linux "$b" && continue
+    is_elf "$(readlink -f "$b")" || continue
     [ -x "$b" ] && phps+=("$(readlink -f "$b")")
   done
   if [ ${#phps[@]} -eq 0 ]; then row Language "PHP" "-" "8.5.12 / 8.4.27 / 8.3.36 / 8.2.35" "-" "-"; fi
@@ -355,12 +445,14 @@ scan() {
   done
 
   # Apache Tomcat
-  local found=0 rn
-  for rn in /opt/*tomcat*/RELEASE-NOTES /opt/tomcat/*/RELEASE-NOTES /usr/share/tomcat*/RELEASE-NOTES /usr/local/*tomcat*/RELEASE-NOTES /var/lib/tomcat*/RELEASE-NOTES /srv/*tomcat*/RELEASE-NOTES; do
+  local found=0 rn tseen=" "
+  for rn in /opt/*tomcat*/RELEASE-NOTES /opt/tomcat/*/RELEASE-NOTES /usr/share/tomcat*/RELEASE-NOTES /usr/local/*tomcat*/RELEASE-NOTES /var/lib/tomcat*/RELEASE-NOTES /srv/*tomcat*/RELEASE-NOTES \
+            $(deep '/lib/catalina\.jar$' | sed 's#/lib/catalina\.jar$#/RELEASE-NOTES#'); do
     [ -f "$rn" ] || continue
     case "$rn" in *.bak-[0-9]*) continue;; esac         # skip this script's own backups
-    found=1
     local td; td=$(dirname "$(readlink -f "$rn")")
+    case "$tseen" in *" $td "*) continue;; esac; tseen="$tseen$td "
+    found=1
     v=$(grep -oE 'Apache Tomcat Version [0-9.]+' "$rn" | head -n1 | awk '{print $4}'); local req; req=$(tomcat_min "$(branch "$v")")
     local tp; tp=$(pkg_of "$rn")
     if [ -z "$req" ]; then row Server "Tomcat [$td]" "$v" "9.0.123+" MANUAL "End-of-life Tomcat: no fix on this branch. Moving to 9.0+ is a major upgrade."
@@ -396,8 +488,10 @@ scan() {
     row Language "Python" "-" "3.14.9 / 3.13.17 / 3.15.1" "-" "-"
     row "Supply chain" "Python: litellm" "-" "not $BAD_LITELLM" "-" "-"; row Library "Python: Pillow" "-" $MIN_PILLOW "-" "-"
   fi
+  local pyseen=" "
   while IFS= read -r py; do
     [ -n "$py" ] || continue
+    pyseen="$pyseen$(dirname "$(dirname "$py")")/ "
     local list lv pv
     list=$(runbin "$py" -m pip list --format=freeze 2>/dev/null)
     lv=$(echo "$list" | grep -i '^litellm==' | cut -d= -f3)
@@ -448,12 +542,47 @@ scan() {
     fi
   done < <(printf '%s\n' "${pys[@]}" | sort -u)
 
-  # OVHcloud CLI
-  if command -v ovhcloud >/dev/null 2>&1; then
-    local ob ov; ob=$(readlink -f "$(command -v ovhcloud)"); ov=$(norm "$(runbin "$ob" version 2>/dev/null)")
+  # Deep scan: LiteLLM / Pillow / certifi in virtual environments, users' ~/.local and applications.
+  # Versions come from the .dist-info folder names; pip only ever runs as the environment's owner (runbin).
+  local di sp base pn pver envroot envpy app who pipc c
+  while IFS= read -r di; do
+    [ -n "$di" ] || continue; not_linux "$di" && continue
+    sp=$(dirname "$di"); base=$(basename "$di" .dist-info); pn=$(echo "${base%%-*}" | tr '[:upper:]' '[:lower:]'); pver=${base#*-}
+    local skip=0 s; for s in $pyseen; do case "$sp" in "$s"*) skip=1;; esac; done; [ $skip -eq 1 ] && continue
+    envroot=${sp%%/lib/python3*}; envpy=""
+    for c in "$envroot/bin/python3" "$envroot/bin/python"; do [ -x "$c" ] && { envpy=$c; break; }; done
+    app=""
+    case "$sp" in
+      */.local/lib/python3*) envpy="";;                                    # a user's pip install --user
+      *) if [ -n "$envpy" ]; then app=$(app_of "$envpy"); else app=$(app_of "$sp/"); [ -z "$app" ] && app="an application"; fi;;
+    esac
+    who=$(owner "$di"); pipc="python3 -m pip install --user -U"; [ -n "$envpy" ] && pipc="$envpy -m pip install -U"
+    case "$pn" in
+      litellm)
+        if [ "$pver" = "$BAD_LITELLM" ]; then row "Supply chain" "Python: litellm [$sp]" "$pver" "not $BAD_LITELLM ($GOOD_LITELLM)" COMPROMISED "Security incident: disconnect, report, rebuild the machine, rotate all secrets."
+        else row "Supply chain" "Python: litellm [$sp]" "$pver" "not $BAD_LITELLM" OK "-"; fi;;
+      pillow)
+        if ver_ge "$pver" $MIN_PILLOW; then row Library "Python: Pillow [$sp]" "$pver" $MIN_PILLOW OK "-"
+        elif [ -n "$app" ]; then row Library "Python: Pillow in $app [$sp]" "$pver" $MIN_PILLOW "IN APP" "Bundled in $app: update $app"
+        elif [ -n "$envpy" ]; then row Library "Python: Pillow [$sp]" "$pver" $MIN_PILLOW UPDATE "pip install --upgrade pillow>=$MIN_PILLOW (as $who)" pillow "$envpy"
+        else row Library "Python: Pillow [$sp]" "$pver" $MIN_PILLOW MANUAL "As $who run:  $pipc \"pillow>=$MIN_PILLOW\""; fi;;
+      certifi)
+        if ver_ge "$pver" "$MIN_CERTIFI"; then :
+        elif [ -n "$app" ]; then row Certificate "Python certifi in $app [$sp]" "$pver" "$MIN_CERTIFI" "IN APP" "Bundled in $app: update $app (its CA list still trusts the eMudhra CA)"
+        elif [ -n "$envpy" ]; then row Certificate "Python certifi [$sp]" "$pver" "$MIN_CERTIFI" UPDATE "pip install -U certifi (as $who)" certifi "$envpy"
+        else row Certificate "Python certifi [$sp]" "$pver" "$MIN_CERTIFI" MANUAL "As $who run:  $pipc certifi"; fi;;
+    esac
+  done < <(deep '\.dist-info$')
+
+  # OVHcloud CLI (PATH and deep scan)
+  local ob ov oany=0
+  while IFS= read -r ob; do
+    [ -n "$ob" ] || continue; not_linux "$ob" && continue; is_elf "$ob" || continue
+    oany=1; ov=$(norm "$(runbin "$ob" version 2>/dev/null)")
     if [ -n "$ov" ] && ver_ge "$ov" $MIN_OVH; then row "Supply chain" "OVHcloud CLI [$ob]" "$ov" $MIN_OVH OK "-"
     else row "Supply chain" "OVHcloud CLI [$ob]" "${ov:-unknown}" $MIN_OVH UPDATE "Replace with verified $MIN_OVH" ovh "$ob"; fi
-  else row "Supply chain" "OVHcloud CLI" "-" $MIN_OVH "-" "-"; fi
+  done < <({ type -aP ovhcloud 2>/dev/null | xargs -r readlink -f; deep '/ovhcloud$'; } | sort -u)
+  [ $oany -eq 0 ] && row "Supply chain" "OVHcloud CLI" "-" $MIN_OVH "-" "-"
 
   # eMudhra certificates in the system CA store
   local cnt; cnt=$(grep -il 'EM \(DV\|OV\|EV\) TLS CA - G3\|EM OV CS CA - G3' /etc/ssl/certs/* /etc/pki/ca-trust/extracted/pem/* 2>/dev/null | wc -l)
@@ -480,16 +609,19 @@ scan() {
     else row Container "Docker images" "Docker not running / no access" "pulled after 21 Oct 2026" CHECK "Run with sudo or start Docker"; fi
   else row Container "Docker images" "-" "pulled after 21 Oct 2026" "-" "-"; fi
 
-  # Next.js
-  if [ -n "$PROJECTS" ] && [ -d "$PROJECTS" ]; then
-    local nf=0 f
-    while read -r f; do
-      nf=1; v=$(grep -m1 '"version"' "$f" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'); local req=16.4.1; case "$v" in 15.*) req=15.5.28;; esac
-      local proj; proj=$(dirname "$(dirname "$(dirname "$f")")")
-      if ver_ge "$v" "$req"; then row Library "Next.js [$proj]" "$v" "$req" OK "-"; else row Library "Next.js [$proj]" "$v" "$req" UPDATE "npm install next@$req" nextjs "$proj|$req"; fi
-    done < <(find "$PROJECTS" -path '*/node_modules/next/package.json' -not -path '*/node_modules/*/node_modules/*' 2>/dev/null)
-    [ $nf -eq 0 ] && row Library "Next.js" "-" "16.4.1 / 15.5.28" "-" "-"
-  else row Library "Next.js" "-" "16.4.1 / 15.5.28" "-" "Use --projects to check"; fi
+  # Next.js: projects found by the deep scan, plus --projects
+  local nf=0 f
+  while read -r f; do
+    [ -f "$f" ] || continue
+    nf=1; v=$(grep -m1 '"version"' "$f" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'); local req=16.4.1; case "$v" in 15.*) req=15.5.28;; esac
+    local proj; proj=$(dirname "$(dirname "$(dirname "$f")")")
+    if ver_ge "$v" "$req"; then row Library "Next.js [$proj]" "$v" "$req" OK "-"; else row Library "Next.js [$proj]" "$v" "$req" UPDATE "npm install next@$req" nextjs "$proj|$req"; fi
+  done < <({ deep '/node_modules/next/dist/server/next-server\.js$' | grep -v '/node_modules/.*/node_modules/' | sed 's#/dist/server/next-server\.js$#/package.json#'
+             [ -n "$PROJECTS" ] && [ -d "$PROJECTS" ] && find "$PROJECTS" -path '*/node_modules/next/package.json' -not -path '*/node_modules/*/node_modules/*' 2>/dev/null; } | sort -u)
+  if [ $nf -eq 0 ]; then
+    if [ "$QUICK" -eq 1 ] && [ -z "$PROJECTS" ]; then row Library "Next.js" "-" "16.4.1 / 15.5.28" "-" "Run without --quick (or use --projects) to check"
+    else row Library "Next.js" "-" "16.4.1 / 15.5.28" "-" "-"; fi
+  fi
 }
 
 show() {
@@ -657,6 +789,7 @@ fix_row() { # fix arg
 echo "Endpoint-Patch | $HOST | $OSNAME | package manager: ${PM:-none} | root: $IS_ROOT"
 log "start on $HOST $OSNAME"
 refresh_repos
+deep_scan                       # once; the scan after updating re-reads the versions of the same files
 scan
 show "CURRENT STATUS"
 save_csv before
@@ -669,6 +802,8 @@ for idx in "${!ROWS[@]}"; do
 done
 echo; echo "Can update automatically: ${#TODO[@]}   Need manual action: $MAN   Fix not released yet: $WAIT"
 [ $WAIT -gt 0 ] && echo "NO FIX YET = the newest available build is already installed. Re-run in a few days, or confirm a distro backport in its security tracker."
+INAPP=$(printf '%s\n' "${ROWS[@]}" | grep -c '|IN APP|')
+[ "$INAPP" -gt 0 ] && echo "IN APP ($INAPP) = an outdated copy bundled inside another application (IDE, Playwright, SonarQube...). Replacing files inside an application breaks it, so only updating (or removing) that application fixes it."
 
 if [ $SCAN_ONLY -eq 1 ] || [ ${#TODO[@]} -eq 0 ]; then echo "Report: $CSV"; log "end (no updates)"; rm -rf "$DL"; exit 0; fi
 if [ $IS_ROOT -ne 1 ]; then echo "Run with sudo to install updates."; echo "Report: $CSV"; rm -rf "$DL"; exit 0; fi
