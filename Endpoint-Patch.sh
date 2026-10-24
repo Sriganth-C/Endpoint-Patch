@@ -62,6 +62,22 @@ ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
 norm()   { echo "$1" | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1; }
 branch() { echo "$1" | cut -d. -f1-2; }
 owner()  { stat -c %U "$1" 2>/dev/null || echo root; }
+# Runs a program found on this machine without giving it root: if the program or its folder can be changed by
+# a normal user, it runs as that user (or nobody); always from / so the current folder is never on an import path
+runbin() {
+  local f="$1"; shift
+  local u=root dir fown downer
+  dir=$(dirname "$f")
+  if [ "$IS_ROOT" -eq 1 ]; then
+    fown=$(stat -c %U "$f" 2>/dev/null); downer=$(stat -c %U "$dir" 2>/dev/null)
+    if [ -n "$fown" ] && [ "$fown" != root ]; then u=$fown
+    elif [ "$downer" != root ] || [ -n "$(find "$dir" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+      u=${downer:-nobody}; [ "$u" = root ] && u=nobody
+    fi
+  fi
+  if [ "$u" = root ] || [ "$IS_ROOT" -ne 1 ]; then ( cd / && "$f" "$@" )
+  else ( cd / && sudo -u "$u" -H "$f" "$@" ); fi
+}
 ARCH="$(uname -m)"
 
 PM=""
@@ -168,7 +184,7 @@ temurin_info() {
 }
 java_tar_row() { # javabin installed required major
   local home; home=$(dirname "$(dirname "$1")")
-  local vendor; vendor=$("$1" -XshowSettings:properties -version 2>&1 | grep -m1 'java.vendor =' | sed 's/.*= //')
+  local vendor; vendor=$(runbin "$1" -XshowSettings:properties -version 2>&1 | grep -m1 'java.vendor =' | sed 's/.*= //')
   if echo "$vendor" | grep -qi adoptium; then
     local info lt; info=$(temurin_info "$4"); lt=$(norm "$(echo "$info" | awk '{print $1}')")
     if [ -z "$lt" ]; then row Runtime "Java [$home]" "$2" "$3" CHECK "Could not reach adoptium.net. Re-run later."
@@ -214,7 +230,7 @@ scan() {
 
   # Java (every JVM)
   local javas=() j
-  for j in $(command -v -a java 2>/dev/null) /usr/lib/jvm/*/bin/java /usr/java/*/bin/java /opt/*/bin/java /opt/java/*/bin/java; do
+  for j in $(type -aP java 2>/dev/null) /usr/lib/jvm/*/bin/java /usr/java/*/bin/java /opt/*/bin/java /opt/java/*/bin/java; do
     case "$j" in *.bak-[0-9]*) continue;; esac          # skip this script's own backups
     not_linux "$j" && continue
     [ -x "$j" ] && javas+=("$(readlink -f "$j")")
@@ -222,7 +238,7 @@ scan() {
   if [ ${#javas[@]} -eq 0 ]; then row Runtime "Java (JDK / JRE)" "-" "21.0.13 / 17.0.21 / 11.0.33 / 8u511" "-" "-"; fi
   for j in $(printf '%s\n' "${javas[@]}" | sort -u); do
     case "$j" in */jre/bin/java) [ -x "${j%/jre/bin/java}/bin/java" ] && continue;; esac
-    local raw; raw=$("$j" -version 2>&1 | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+    local raw; raw=$(runbin "$j" -version 2>&1 | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
     local jp; jp=$(pkg_of "$j")
     case "$raw" in
       1.8.0_*)
@@ -241,9 +257,9 @@ scan() {
 
   # Node.js
   local nb="" n
-  for n in $(command -v -a node 2>/dev/null); do not_linux "$n" && continue; nb=$(readlink -f "$n"); break; done
+  while IFS= read -r n; do [ -n "$n" ] || continue; not_linux "$n" && continue; nb=$(readlink -f "$n"); break; done < <(type -aP node 2>/dev/null)
   if [ -n "$nb" ]; then
-    v=$(norm "$("$nb" -v)"); local maj=${v%%.*}; local req; req=$(node_min "$maj")
+    v=$(norm "$(runbin "$nb" -v)"); local maj=${v%%.*}; local req; req=$(node_min "$maj")
     local np; np=$(pkg_of "$nb")
     if [ -n "$req" ] && ver_ge "$v" "$req"; then row Runtime "Node.js [$nb]" "$v" "$req" OK "-"
     elif [ -z "$req" ]; then row Runtime "Node.js [$nb]" "$v" "22.23.4 / 24.22.1 / 26.12.1" MANUAL "End-of-life Node.js: move to 22, 24 or 26 (major version change)."
@@ -255,13 +271,13 @@ scan() {
 
   # PHP (every php binary)
   local phps=() b
-  for b in $(command -v -a php 2>/dev/null) /usr/bin/php[0-9]* /usr/bin/php[0-9].[0-9] /opt/remi/*/root/usr/bin/php /usr/local/bin/php /usr/local/lsws/lsphp*/bin/php; do
+  for b in $(type -aP php 2>/dev/null) /usr/bin/php[0-9]* /usr/bin/php[0-9].[0-9] /opt/remi/*/root/usr/bin/php /usr/local/bin/php /usr/local/lsws/lsphp*/bin/php; do
     not_linux "$b" && continue
     [ -x "$b" ] && phps+=("$(readlink -f "$b")")
   done
   if [ ${#phps[@]} -eq 0 ]; then row Language "PHP" "-" "8.5.12 / 8.4.27 / 8.3.36 / 8.2.35" "-" "-"; fi
   for b in $(printf '%s\n' "${phps[@]}" | sort -u); do
-    v=$("$b" -r 'echo PHP_VERSION;' 2>/dev/null); v=$(norm "$v"); [ -z "$v" ] && continue
+    v=$(runbin "$b" -r 'echo PHP_VERSION;' 2>/dev/null); v=$(norm "$v"); [ -z "$v" ] && continue
     local req; req=$(php_min "$(branch "$v")"); local pp; pp=$(pkg_of "$b")
     if [ -z "$req" ]; then row Language "PHP [$b]" "$v" "8.2.35+" MANUAL "End-of-life PHP: no fix on this branch. Moving to 8.2+ is a major upgrade."
     elif ver_ge "$v" "$req"; then row Language "PHP [$b]" "$v" "$req" OK "-"
@@ -296,26 +312,28 @@ scan() {
 
   # Python runtime, its certifi (eMudhra), LiteLLM and Pillow
   local pys=() py
-  for py in $(command -v -a python3 python 2>/dev/null) /usr/bin/python3.[0-9]* /usr/local/bin/python3.[0-9]*; do
+  while IFS= read -r py; do
+    [ -n "$py" ] || continue
     not_linux "$py" && continue
     case "$py" in *-config|*m-config) continue;; esac
     [ -x "$py" ] || continue
     [ -f "$(dirname "$(dirname "$py")")/pyvenv.cfg" ] && continue        # virtual environments follow their base Python
     pys+=("$(readlink -f "$py")")
-  done
+  done < <({ type -aP python3 python 2>/dev/null; ls -1d /usr/bin/python3.[0-9]* /usr/local/bin/python3.[0-9]* 2>/dev/null; })
   if [ ${#pys[@]} -eq 0 ]; then
     row Language "Python" "-" "3.14.9 / 3.13.17 / 3.15.1" "-" "-"
     row "Supply chain" "Python: litellm" "-" "not $BAD_LITELLM" "-" "-"; row Library "Python: Pillow" "-" $MIN_PILLOW "-" "-"
   fi
-  for py in $(printf '%s\n' "${pys[@]}" | sort -u); do
+  while IFS= read -r py; do
+    [ -n "$py" ] || continue
     local list lv pv
-    list=$("$py" -m pip list --format=freeze 2>/dev/null)
+    list=$(runbin "$py" -m pip list --format=freeze 2>/dev/null)
     lv=$(echo "$list" | grep -i '^litellm==' | cut -d= -f3)
     pv=$(echo "$list" | grep -i '^pillow==' | cut -d= -f3)
 
     # Python itself
     local pyv pbr preq ppk
-    pyv=$(norm "$("$py" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)")
+    pyv=$(norm "$(runbin "$py" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)")
     pbr=$(branch "$pyv"); preq=$(py_min "$pbr"); ppk=$(pkg_of "$py")
     if [ -z "$pyv" ]; then row Language "Python [$py]" unknown "3.14.9 / 3.13.17" CHECK "Could not start this Python"
     elif [ "$lv" = "$BAD_LITELLM" ]; then row Language "Python [$py]" "$pyv" "-" COMPROMISED "Skipped: this Python is compromised by litellm $BAD_LITELLM"
@@ -335,8 +353,8 @@ scan() {
 
     # certifi (CA list used by pip / requests). Distro builds that point certifi at the system CA store are fixed by ca-certificates.
     local cv cwhere
-    cv=$(norm "$("$py" -c 'import certifi;print(certifi.__version__)' 2>/dev/null)")
-    cwhere=$("$py" -c 'import certifi;print(certifi.where())' 2>/dev/null)
+    cv=$(norm "$(runbin "$py" -c 'import certifi;print(certifi.__version__)' 2>/dev/null)")
+    cwhere=$(runbin "$py" -c 'import certifi;print(certifi.where())' 2>/dev/null)
     if [ -n "$cv" ] && [ "$lv" != "$BAD_LITELLM" ] && ! ver_ge "$cv" "$MIN_CERTIFI"; then
       case "$cwhere" in
         /etc/ssl/*|/etc/pki/*) row Certificate "Python certifi [$py]" "$cv (system CA)" "$MIN_CERTIFI" OK "Uses the system CA store";;
@@ -356,11 +374,11 @@ scan() {
       if [ -n "$pk" ]; then pkg_row Library "Python: Pillow [$py]" "$pv" $MIN_PILLOW "$pk" "Upgrade $pk" pkg "$pk"
       else row Library "Python: Pillow [$py]" "$pv" $MIN_PILLOW UPDATE "pip install --upgrade pillow>=$MIN_PILLOW" pillow "$py"; fi
     fi
-  done
+  done < <(printf '%s\n' "${pys[@]}" | sort -u)
 
   # OVHcloud CLI
   if command -v ovhcloud >/dev/null 2>&1; then
-    local ob ov; ob=$(readlink -f "$(command -v ovhcloud)"); ov=$(norm "$(ovhcloud version 2>/dev/null)")
+    local ob ov; ob=$(readlink -f "$(command -v ovhcloud)"); ov=$(norm "$(runbin "$ob" version 2>/dev/null)")
     if [ -n "$ov" ] && ver_ge "$ov" $MIN_OVH; then row "Supply chain" "OVHcloud CLI [$ob]" "$ov" $MIN_OVH OK "-"
     else row "Supply chain" "OVHcloud CLI [$ob]" "${ov:-unknown}" $MIN_OVH UPDATE "Replace with verified $MIN_OVH" ovh "$ob"; fi
   else row "Supply chain" "OVHcloud CLI" "-" $MIN_OVH "-" "-"; fi
@@ -520,13 +538,12 @@ fix_row() { # fix arg
       esac
       echo "FAILED: GitLab $gv not found in the repo. See docs.gitlab.com/update.";;
     pillow)
-      if "$2" -m pip install --upgrade "pillow>=$MIN_PILLOW" >> "$LOG" 2>&1; then echo "Pillow upgraded."
-      elif grep -q externally-managed "$LOG" && "$2" -m pip install --upgrade --break-system-packages "pillow>=$MIN_PILLOW" >> "$LOG" 2>&1; then echo "Pillow upgraded (pip-managed copy, same way it was installed)."
+      if runbin "$2" -m pip install --upgrade "pillow>=$MIN_PILLOW" >> "$LOG" 2>&1; then echo "Pillow upgraded."
+      elif grep -q externally-managed "$LOG" && runbin "$2" -m pip install --upgrade --break-system-packages "pillow>=$MIN_PILLOW" >> "$LOG" 2>&1; then echo "Pillow upgraded (pip-managed copy, same way it was installed)."
       else echo "FAILED: pip could not upgrade Pillow (old Python?). See log."; fi;;
     certifi)
-      local u; u=$(owner "$2"); local run=""; [ "$u" != root ] && run="sudo -u $u -H"
-      if $run "$2" -m pip install -U certifi >> "$LOG" 2>&1 || { grep -q externally-managed "$LOG" && $run "$2" -m pip install -U --break-system-packages certifi >> "$LOG" 2>&1; }; then
-        echo "certifi $(norm "$("$2" -c 'import certifi;print(certifi.__version__)' 2>/dev/null)") installed (eMudhra CA removed)."
+      if runbin "$2" -m pip install -U certifi >> "$LOG" 2>&1 || { grep -q externally-managed "$LOG" && runbin "$2" -m pip install -U --break-system-packages certifi >> "$LOG" 2>&1; }; then
+        echo "certifi $(norm "$(runbin "$2" -c 'import certifi;print(certifi.__version__)' 2>/dev/null)") installed (eMudhra CA removed)."
       else echo "FAILED: pip could not update certifi. See log."; fi;;
     ca)
       pkg_upgrade "$2"
