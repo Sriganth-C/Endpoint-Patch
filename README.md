@@ -40,6 +40,11 @@ The script shows the current status, asks **Update now? (Y/N)**, updates, then s
 |---|---|---|
 | Report only, change nothing | add `-ScanOnly` | add `endpoint-patch --scan-only` after the closing `)"` |
 | Update without asking (Intune / GPO / Ansible) | add `-Yes` | add `endpoint-patch --yes` |
+| Skip the deep scan (faster, standard locations only) | add `-Quick` | add `endpoint-patch --quick` |
+
+### Deep scan (default)
+
+Every local drive / filesystem is searched once (about 3–5 minutes) for the checklist software, so the script also finds zip and tarball installs, portable copies, Python virtual environments, and copies **bundled inside other applications** (for example Burp Suite's browser, Playwright's Chromium, the Java inside IDEs and SonarQube, MySQL Shell's Python). Versions are read from the files themselves. Bundled copies are reported as `IN APP`: replacing files inside an application breaks it, so only updating that application fixes them.
 | Also check Next.js in code folders | add `-ScanProjects "C:\code"` | add `endpoint-patch --projects /srv/code` |
 
 ## What it checks and how it updates
@@ -68,7 +73,8 @@ The script shows the current status, asks **Update now? (Y/N)**, updates, then s
 | NO FIX YET | Already on the newest build the vendor has published; the fix is not out yet (or the distro backported it). Run again later. |
 | COMPROMISED | Malicious LiteLLM 1.107.0. Docker images are cleaned automatically; a Python install is a security incident: disconnect the machine, rebuild it, rotate secrets |
 | MANUAL | Needs a major-version change (end-of-life PHP, Tomcat, Java, Node.js) or a vendor the script does not know |
-| NO PATCH | Windows 7/8 cannot run the fixed Chrome, Edge or Node.js |
+| NO PATCH | No installable fix exists for this platform (Windows 7/8 browsers and Node.js; Python 3.11/3.12 security releases have no Windows installer) |
+| IN APP | Outdated copy bundled inside another application: update (or remove) that application |
 | - | Not installed |
 
 ## Safety
