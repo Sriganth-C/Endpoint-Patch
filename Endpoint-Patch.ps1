@@ -622,7 +622,7 @@ function Invoke-Scan {
     elseif ($lp -match 'conda|miniforge|mambaforge') { Add-Row 'Language' "Python (conda) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by conda: run  conda install python=$($PyMin[$pbr])" 'manual' }
     elseif ($lp -match '\\pyenv-win\\') { Add-Row 'Language' "Python (pyenv) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by pyenv: run  pyenv install $($PyMin[$pbr])" 'manual' }
     elseif ($lp -match '\\pythoncore-') { Add-Row 'Language' "Python (install manager) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by the Python install manager: update $pbr with it (see: py help install)" 'manual' }
-    elseif ($PyHasInstaller -notcontains $pbr) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'NO PATCH' "python.org has no Windows installer for $($PyMin[$pbr]) (source only). Certifi is updated below; for the CVE fixes move to 3.13/3.14." }
+    elseif ($PyHasInstaller -notcontains $pbr) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'NO PATCH' "Python $pbr is security-only: python.org publishes $($PyMin[$pbr]) as source code only, no Windows installer exists (the last Windows build of 3.12 was 3.12.10, of 3.11 was 3.11.9). To get the fixes, install Python 3.13.17 or 3.14.9 and move the apps to it (test them first)." }
     elseif (-not $safe) {
       $pyUrl = "$REL/python-$($PyMin[$pbr])-amd64.exe"
       Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'MANUAL' "Folder is user-writable, so it is not updated as admin. $userCmd run the python.org installer $($PyMin[$pbr]) ($pyUrl) and choose Upgrade" 'manual'
