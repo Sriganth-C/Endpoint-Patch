@@ -194,39 +194,91 @@ java_tar_row() { # javabin installed required major
   else row Runtime "Java [$home]" "$2" "$3" MANUAL "Tarball JDK from ${vendor:-an unknown vendor}. Install Java $3 from that vendor."; fi
 }
 
+# ---------------- Browsers ----------------
+pkg_ver() { # installed version of a package, empty if not installed
+  case "$PM" in
+    apt) dpkg-query -W -f='${Status}|${Version}\n' "$1" 2>/dev/null | awk -F'|' '$1 ~ / installed$/ {print $2}' | head -n1;;
+    dnf|yum|zypper) rpm -q --qf '%{VERSION}\n' "$1" 2>/dev/null | grep -v 'not installed' | head -n1;;
+    apk) apk list -I "$1" 2>/dev/null | awk '{print $1}' | sed "s/^$1-//" | head -n1;;
+  esac
+}
+browser_req() { # name version esr(0/1)
+  case "$1" in
+    *Edge*) case "$2" in 152.*) echo $MIN_EDGE_EXT;; *) echo $MIN_EDGE;; esac;;
+    *Firefox*) case "$2" in 115.*) echo $MIN_FF_ESR115;; 153.*) echo $MIN_FF_ESR153;; *) if [ "$3" = 1 ]; then echo $MIN_FF_ESR153; else echo $MIN_FF; fi;; esac;;
+    *) echo $MIN_CHROME;;
+  esac
+}
+# One row per install of a browser: distro/vendor package, snap, flatpak (system and per-user), or a plain folder
+browser_rows() { # type name required "packages" snap-name flatpak-id vendor-binary
+  local t="$1" name="$2" pk snapn="$5" fp="$6" bin="$7" v req any=0 esr pkgfiles=""
+  for pk in $4; do
+    v=$(norm "$(pkg_ver "$pk")"); [ -n "$v" ] || continue      # e.g. Ubuntu's "firefox" deb that only installs the snap has no real version
+    any=1; esr=0; case "$pk" in *esr*) esr=1;; esac
+    req=$(browser_req "$name" "$v" $esr)
+    if ver_ge "$v" "$req"; then row "$t" "$name" "$v" "$req" OK "-"
+    else pkg_row "$t" "$name" "$v" "$req" "$pk" "Upgrade $pk" pkg "$pk"; fi
+    pkgfiles="$pk"; break
+  done
+  if [ -n "$snapn" ] && command -v snap >/dev/null 2>&1; then
+    v=$(norm "$(snap list "$snapn" 2>/dev/null | awk 'NR==2{print $2}')")
+    if [ -n "$v" ]; then
+      any=1
+      local chan savail; chan=$(snap list "$snapn" 2>/dev/null | awk 'NR==2{print $4}'); chan=${chan:-latest/stable}
+      esr=0; case "$chan" in esr*) esr=1;; esac
+      req=$(browser_req "$name" "$v" $esr)
+      savail=$(norm "$(snap info "$snapn" 2>/dev/null | grep -E "^  $chan:" | awk '{print $2}')")
+      if ver_ge "$v" "$req"; then row "$t" "$name (snap)" "$v" "$req" OK "-"
+      elif [ -n "$savail" ] && ! ver_ge "$savail" "$req"; then row "$t" "$name (snap)" "$v" "$req" "NO FIX YET" "Snap store still offers $savail on $chan. Re-run later."
+      else row "$t" "$name (snap)" "$v" "$req" UPDATE "snap refresh $snapn (store has ${savail:-a newer build})" snap "$snapn"; fi
+    fi
+  fi
+  if [ -n "$fp" ] && command -v flatpak >/dev/null 2>&1; then
+    local who fl h
+    # system-wide flatpak, then each user's own flatpak (listed as that user; nothing runs as root for them)
+    for who in system $(for h in /home/*/.local/share/flatpak/app/"$fp" /root/.local/share/flatpak/app/"$fp"; do [ -d "$h" ] && owner "$h"; done); do
+      if [ "$who" = system ]; then fl=$(flatpak list --system --app --columns=application,version 2>/dev/null | awk -v a="$fp" '$1==a{print $2}' | head -n1)
+      elif [ "$IS_ROOT" -eq 1 ]; then fl=$(sudo -u "$who" -H flatpak list --user --app --columns=application,version 2>/dev/null | awk -v a="$fp" '$1==a{print $2}' | head -n1)
+      else fl=$(flatpak list --user --app --columns=application,version 2>/dev/null | awk -v a="$fp" '$1==a{print $2}' | head -n1); fi
+      v=$(norm "$fl"); [ -n "$v" ] || continue
+      any=1; req=$(browser_req "$name" "$v" 0)
+      local lbl="$name (flatpak)"; [ "$who" != system ] && lbl="$name (flatpak, user $who)"
+      if ver_ge "$v" "$req"; then row "$t" "$lbl" "$v" "$req" OK "-"
+      else row "$t" "$lbl" "$v" "$req" UPDATE "flatpak update $fp" flatpak "$who|$fp"; fi
+    done
+  fi
+  # Installed from a download instead of a package (folder in /opt, /usr/local or a home folder)
+  local d
+  if [ -n "$bin" ]; then
+    if [ -x "$bin" ] && [ $any -eq 0 ]; then
+      any=1; v=$(norm "$(runbin "$bin" --version 2>/dev/null)"); req=$(browser_req "$name" "$v" 0)
+      if [ -z "$v" ]; then row "$t" "$name [$bin]" unknown "$req" CHECK "Version not readable. Open the browser's About page."
+      elif ver_ge "$v" "$req"; then row "$t" "$name [$bin]" "$v" "$req" OK "-"
+      else row "$t" "$name [$bin]" "$v" "$req" MANUAL "Not installed from a package: reinstall from the vendor's .deb/.rpm so it gets updates"; fi
+    fi
+  else
+    for d in /opt/firefox* /usr/local/firefox* /home/*/firefox /home/*/.local/firefox /home/*/Applications/firefox /usr/lib/firefox /usr/lib64/firefox /usr/lib/firefox-esr; do
+      [ -f "$d/application.ini" ] || continue
+      [ -n "$pkgfiles" ] && [ -n "$(pkg_of "$d/application.ini")" ] && continue        # the package row above covers it
+      v=$(grep -m1 '^Version=' "$d/application.ini" | cut -d= -f2); v=$(norm "$v"); [ -n "$v" ] || continue
+      any=1; esr=0; grep -qs 'app.update.channel", *"esr' "$d/defaults/pref/channel-prefs.js" && esr=1
+      req=$(browser_req "$name" "$v" $esr)
+      if ver_ge "$v" "$req"; then row "$t" "$name [$d]" "$v" "$req" OK "-"
+      else row "$t" "$name [$d]" "$v" "$req" MANUAL "Downloaded Firefox (no package). As $(owner "$d"): Help > About Firefox, or install the distro package"; fi
+    done
+  fi
+  [ $any -eq 0 ] && row "$t" "$name" "-" "$3" "-" "-"
+}
+
 scan() {
   ROWS=()
 
-  # Browsers
+  # Browsers: versions come from the package database / snap / flatpak / the install folder. Browsers are not
+  # started as root (Firefox refuses to, which used to give an empty version and a wrong status).
   local v
-  if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
-    v=$(norm "$(google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null)")
-    if ver_ge "$v" $MIN_CHROME; then row Browser "Google Chrome" "$v" $MIN_CHROME OK "-"
-    else pkg_row Browser "Google Chrome" "$v" $MIN_CHROME google-chrome-stable "Upgrade google-chrome-stable" pkg google-chrome-stable; fi
-  else row Browser "Google Chrome" "-" $MIN_CHROME "-" "-"; fi
-
-  if command -v microsoft-edge >/dev/null 2>&1 || command -v microsoft-edge-stable >/dev/null 2>&1; then
-    v=$(norm "$(microsoft-edge --version 2>/dev/null || microsoft-edge-stable --version 2>/dev/null)")
-    local req=$MIN_EDGE; case "$v" in 152.*) req=$MIN_EDGE_EXT;; esac
-    if ver_ge "$v" "$req"; then row Browser "Microsoft Edge" "$v" "$req" OK "-"
-    else pkg_row Browser "Microsoft Edge" "$v" "$req" microsoft-edge-stable "Upgrade microsoft-edge-stable" pkg microsoft-edge-stable; fi
-  else row Browser "Microsoft Edge" "-" $MIN_EDGE "-" "-"; fi
-
-  if command -v firefox >/dev/null 2>&1 || command -v firefox-esr >/dev/null 2>&1; then
-    v=$(norm "$(firefox --version 2>/dev/null || firefox-esr --version 2>/dev/null)")
-    local fpkg=firefox; pkg_installed firefox-esr && fpkg=firefox-esr
-    local req=$MIN_FF; case "$v" in 153.*) req=$MIN_FF_ESR153;; 115.*) req=$MIN_FF_ESR115;; esac
-    local fix=pkg; command -v snap >/dev/null 2>&1 && snap list firefox >/dev/null 2>&1 && fix=snap
-    local savail=""
-    if [ "$fix" = snap ]; then   # version the snap store offers on the channel this machine follows
-      local chan; chan=$(snap info firefox 2>/dev/null | awk '/^tracking:/{print $2}'); chan=${chan:-latest/stable}
-      savail=$(norm "$(snap info firefox 2>/dev/null | grep -E "^  $chan:" | awk '{print $2}')")
-    fi
-    if ver_ge "$v" "$req"; then row Browser "Mozilla Firefox" "$v" "$req" OK "-"
-    elif [ "$fix" = snap ] && [ -n "$savail" ] && ! ver_ge "$savail" "$req"; then row Browser "Mozilla Firefox (snap)" "$v" "$req" "NO FIX YET" "Snap store still offers $savail on $chan. Re-run later."
-    elif [ "$fix" = snap ]; then row Browser "Mozilla Firefox (snap)" "$v" "$req" UPDATE "snap refresh firefox (store has ${savail:-a newer build})" snap firefox
-    else pkg_row Browser "Mozilla Firefox" "$v" "$req" $fpkg "Upgrade $fpkg" pkg "$fpkg"; fi
-  else row Browser "Mozilla Firefox" "-" $MIN_FF "-" "-"; fi
+  browser_rows Browser "Google Chrome" $MIN_CHROME "google-chrome-stable google-chrome" "" com.google.Chrome /opt/google/chrome/chrome
+  browser_rows Browser "Microsoft Edge" $MIN_EDGE "microsoft-edge-stable microsoft-edge" "" com.microsoft.Edge /opt/microsoft/msedge/msedge
+  browser_rows Browser "Mozilla Firefox" $MIN_FF "firefox-esr firefox" firefox org.mozilla.firefox ""
 
   # Java (every JVM)
   local javas=() j
@@ -263,11 +315,28 @@ scan() {
     local np; np=$(pkg_of "$nb")
     if [ -n "$req" ] && ver_ge "$v" "$req"; then row Runtime "Node.js [$nb]" "$v" "$req" OK "-"
     elif [ -z "$req" ]; then row Runtime "Node.js [$nb]" "$v" "22.23.4 / 24.22.1 / 26.12.1" MANUAL "End-of-life Node.js: move to 22, 24 or 26 (major version change)."
-    elif echo "$nb" | grep -q '/\.nvm/'; then row Runtime "Node.js (nvm) [$nb]" "$v" "$req" UPDATE "nvm install $req (as $(owner "$nb"))" nvm "$(owner "$nb")|$req"
+    elif echo "$nb" | grep -q '/\.nvm/'; then row Runtime "Node.js (nvm) [$nb]" "$v" "$req" UPDATE "nvm install $req (as $(owner "$nb"))" nvm "$(owner "$nb")|$req|1"
     elif [ -n "$np" ]; then pkg_row Runtime "Node.js [$nb]" "$v" "$req" "$np" "Upgrade $np" pkg "$np"
     elif [ "$nb" = /usr/local/bin/node ]; then row Runtime "Node.js [$nb]" "$v" "$req" UPDATE "Install official Node.js $req tarball into /usr/local" nodetar "$req"
     else row Runtime "Node.js [$nb]" "$v" "$req" MANUAL "Custom install location. Install Node.js $req there."; fi
-  else row Runtime "Node.js" "-" "22.23.4 / 24.22.1 / 26.12.1" "-" "-"; fi
+  fi
+  # nvm installs in every home folder (sudo uses root's PATH, so these are not found above). For each user,
+  # the newest installed version of each major is checked; versions are read from the folder names.
+  local nd nmaj nv nbin nany=0
+  for nd in /home/*/.nvm/versions/node /root/.nvm/versions/node; do
+    [ -d "$nd" ] || continue
+    local nu; nu=$(owner "$nd")
+    for nmaj in $(ls -1 "$nd" 2>/dev/null | grep -oE '^v[0-9]+' | sort -u); do
+      nv=$(ls -1 "$nd" | grep -E "^$nmaj\." | sed 's/^v//' | sort -V | tail -n1); nbin="$nd/v$nv/bin/node"
+      [ -x "$nbin" ] || continue
+      nany=1; [ "$(readlink -f "$nbin")" = "$nb" ] && continue          # already reported above
+      local req; req=$(node_min "${nmaj#v}")
+      if [ -z "$req" ]; then row Runtime "Node.js (nvm, user $nu) [$nbin]" "$nv" "22.23.4 / 24.22.1 / 26.12.1" MANUAL "End-of-life Node.js: as $nu run  nvm uninstall $nv  and use 22, 24 or 26"
+      elif ver_ge "$nv" "$req"; then row Runtime "Node.js (nvm, user $nu)" "$nv" "$req" OK "-"
+      else row Runtime "Node.js (nvm, user $nu)" "$nv" "$req" UPDATE "nvm install $req (as $nu)" nvm "$nu|$req|0"; fi
+    done
+  done
+  [ -z "$nb" ] && [ $nany -eq 0 ] && row Runtime "Node.js" "-" "22.23.4 / 24.22.1 / 26.12.1" "-" "-"
 
   # PHP (every php binary)
   local phps=() b
@@ -319,7 +388,10 @@ scan() {
     [ -x "$py" ] || continue
     [ -f "$(dirname "$(dirname "$py")")/pyvenv.cfg" ] && continue        # virtual environments follow their base Python
     pys+=("$(readlink -f "$py")")
-  done < <({ type -aP python3 python 2>/dev/null; ls -1d /usr/bin/python3.[0-9]* /usr/local/bin/python3.[0-9]* 2>/dev/null; })
+  done < <({ type -aP python3 python 2>/dev/null; ls -1d /usr/bin/python3.[0-9]* /usr/local/bin/python3.[0-9]* 2>/dev/null
+             # per-user Pythons (pyenv, uv, conda) are not on root's PATH under sudo
+             ls -1d /home/*/.pyenv/versions/*/bin/python3 /root/.pyenv/versions/*/bin/python3 /home/*/.local/share/uv/python/*/bin/python3 \
+                    /home/*/miniconda3/bin/python3 /home/*/anaconda3/bin/python3 /home/*/miniforge3/bin/python3 2>/dev/null; })
   if [ ${#pys[@]} -eq 0 ]; then
     row Language "Python" "-" "3.14.9 / 3.13.17 / 3.15.1" "-" "-"
     row "Supply chain" "Python: litellm" "-" "not $BAD_LITELLM" "-" "-"; row Library "Python: Pillow" "-" $MIN_PILLOW "-" "-"
@@ -520,6 +592,11 @@ fix_row() { # fix arg
   case "$1" in
     pkg) pkg_upgrade "$2" && echo "Upgraded $2." || echo "FAILED: see log";;
     snap) snap refresh "$2" >> "$LOG" 2>&1 && echo "Refreshed snap $2. Relaunch it." || echo "FAILED: see log";;
+    flatpak)
+      local who=${2%%|*} id=${2##*|}
+      if [ "$who" = system ]; then flatpak update -y --noninteractive "$id" >> "$LOG" 2>&1
+      else sudo -u "$who" -H flatpak update --user -y --noninteractive "$id" >> "$LOG" 2>&1; fi \
+        && echo "Updated flatpak $id. Relaunch it." || echo "FAILED: see log";;
     php)
       local all=""
       case "$PM" in
@@ -558,10 +635,11 @@ fix_row() { # fix arg
     tomcat) update_tomcat "${2%%|*}" "${2##*|}";;
     temurin) update_temurin "${2%%|*}" "${2##*|}";;
     nodetar) update_nodetar "$2";;
-    nvm)
-      local u=${2%%|*} ver=${2##*|}
-      sudo -u "$u" -H bash -c "export NVM_DIR=\"\$HOME/.nvm\"; . \"\$NVM_DIR/nvm.sh\" && nvm install $ver && nvm alias default $ver" >> "$LOG" 2>&1 \
-        && echo "Node.js $ver installed with nvm for $u and set as default." || echo "FAILED: nvm install failed. See log.";;
+    nvm) # user|version|setdefault(1/0)
+      local u=${2%%|*} rest=${2#*|}; local ver=${rest%%|*} def=${rest##*|} cmd
+      cmd="nvm install $ver"; [ "$def" = 0 ] || cmd="$cmd && nvm alias default $ver"
+      sudo -u "$u" -H bash -c "export NVM_DIR=\"\$HOME/.nvm\"; . \"\$NVM_DIR/nvm.sh\" && $cmd" >> "$LOG" 2>&1 \
+        && echo "Node.js $ver installed with nvm for $u." || echo "FAILED: nvm install failed. See log.";;
     ovh) update_ovh "$2";;
     dockerpull) docker pull "$2" >> "$LOG" 2>&1 && echo "Pulled the patched image. Rebuild app images that use it." || echo "FAILED: docker pull failed. See log.";;
     litellmimg)
