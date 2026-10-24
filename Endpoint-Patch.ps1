@@ -23,6 +23,16 @@
 #>
 param([switch]$ScanOnly, [switch]$Yes, [string]$ScanProjects = "")
 
+# 32-bit PowerShell on 64-bit Windows sees "Program Files (x86)" as Program Files and a redirected registry,
+# so 64-bit programs would look "not installed": restart in 64-bit PowerShell
+$ps64 = "$env:SystemRoot\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64' -and $MyInvocation.MyCommand.Path -and (Test-Path $ps64)) {
+  $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $MyInvocation.MyCommand.Path)
+  if ($ScanOnly) { $a += '-ScanOnly' }; if ($Yes) { $a += '-Yes' }; if ($ScanProjects) { $a += '-ScanProjects'; $a += $ScanProjects }
+  & $ps64 @a
+  exit $LASTEXITCODE
+}
+
 $ErrorActionPreference = 'SilentlyContinue'
 # Company-managed PCs often lock PowerShell to Constrained Language Mode; this script only uses
 # what that mode allows, and skips the few full-mode extras when it is active.
@@ -66,6 +76,8 @@ function FileVer($p) { if ($p -and (Test-Path $p)) { return "$((Get-Item $p).Ver
 function WhereAll($exe) {
   $out = cmd /c "where $exe 2>nul"
   $r = @(); foreach ($l in $out) { if ($l -and ($l -notmatch 'WindowsApps')) { $r += $l.Trim() } }
+  # plus the PATH of every logged-on user (this window cannot see it when it runs as another account)
+  foreach ($d in $script:userPath) { $f = Join-Path $d $exe; if ($d -notmatch 'WindowsApps' -and $r -notcontains $f -and (Test-Path $f)) { $r += $f } }
   return , $r
 }
 function Has($exe) { $r = WhereAll $exe; return ($r.Count -gt 0) }
@@ -80,6 +92,62 @@ $is64 = ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -or $env:PROCESSOR_ARCHITEW6432
 $arch = 'x86'; if ($is64) { $arch = 'x64' }; if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $arch = 'arm64' }
 cmd /c "net session >nul 2>&1"; $isAdmin = ($LASTEXITCODE -eq 0)
 $hasWinget = [bool](Get-Command winget.exe)          # winget lives in WindowsApps, which WhereAll skips
+
+# Every user profile. "Run as administrator" often runs as a different (admin) account than the person
+# logged on, so this window's %LOCALAPPDATA%, HKCU and PATH are not where that person's per-user installs
+# are (Chrome, Firefox, Python, Node.js in AppData). Each profile and each logged-on user's registry is checked.
+$profiles = @()
+foreach ($k in (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList')) {
+  $sid = $k.PSChildName
+  if ($sid -notmatch '^S-1-(5-21|12-1)-') { continue }        # local, domain and Entra ID (Azure AD) accounts
+  $ph = "$((Get-ItemProperty $k.PSPath).ProfileImagePath)".TrimEnd('\')
+  if (-not $ph -or -not (Test-Path $ph)) { continue }
+  $hive = $null; if (Test-Path "Registry::HKEY_USERS\$sid") { $hive = "Registry::HKEY_USERS\$sid" }
+  $profiles += , @{ Sid = $sid; Home = $ph; Name = (Split-Path $ph -Leaf); Local = (Join-Path $ph 'AppData\Local'); Roaming = (Join-Path $ph 'AppData\Roaming'); Hive = $hive }
+}
+# Registry roots with per-user settings: this window's HKCU plus every logged-on user
+$userRoots = @('HKCU:'); foreach ($p in $profiles) { if ($p.Hive) { $userRoots += $p.Hive } }
+# PATH of every logged-on user, with %USERPROFILE% etc. expanded for that user (not for this admin window)
+$script:userPath = @()
+foreach ($p in $profiles) {
+  if (-not $p.Hive) { continue }
+  $vars = @{ USERPROFILE = $p.Home; LOCALAPPDATA = $p.Local; APPDATA = $p.Roaming; HOMEPATH = $p.Home.Substring(2); HOMEDRIVE = $p.Home.Substring(0, 2); USERNAME = $p.Name }
+  $raw = ''
+  foreach ($l in (cmd /c "reg query `"HKU\$($p.Sid)\Environment`" 2>nul")) {
+    if ($l -match '^\s+(\S+)\s+REG_(EXPAND_)?SZ\s+(.*)$') { if ($Matches[1] -eq 'Path') { $raw = $Matches[3] } else { $vars[$Matches[1].ToUpper()] = $Matches[3] } }
+  }
+  foreach ($d in ($raw -split ';')) {
+    $d = $d.Trim(); $n = 0
+    while ($d -match '%([^%]+)%' -and $n -lt 10) {
+      $n++; $name = $Matches[1]; $val = ''
+      if ($vars.ContainsKey($name.ToUpper())) { $val = $vars[$name.ToUpper()] } else { $val = "$((Get-Item "env:$name").Value)" }
+      $d = $d.Replace("%$name%", $val)
+    }
+    if ($d -and $d -notmatch '%' -and $script:userPath -notcontains $d) { $script:userPath += $d }
+  }
+}
+# Certificates in another logged-on user's store are only reachable through the registry: the certificate
+# blob is matched against the compromised CA names (as hex); Cert:\CurrentUser covers this window's account
+$mySid = ''; foreach ($l in (cmd /c "whoami /user /fo csv /nh 2>nul")) { if ("$l" -match '"(S-1-[^"]+)"') { $mySid = $Matches[1] } }
+$EM_HEX = @()
+foreach ($s in 'EM DV TLS CA - G3', 'EM OV TLS CA - G3', 'EM EV TLS CA - G3', 'EM OV CS CA - G3') { $h = ''; foreach ($ch in $s.ToCharArray()) { $h += '{0:X2}' -f [int]$ch }; $EM_HEX += $h }
+function Find-UserEmudhra {
+  $hits = @()
+  foreach ($p in $profiles) {
+    if (-not $p.Hive -or $p.Sid -eq $mySid) { continue }
+    foreach ($store in 'CA', 'Root') {
+      $key = ''
+      foreach ($l in (cmd /c "reg query `"HKU\$($p.Sid)\Software\Microsoft\SystemCertificates\$store\Certificates`" /s 2>nul")) {
+        if ("$l" -match '^HKEY_') { $key = "$l".Trim() }
+        elseif ($key -and "$l" -match '^\s+Blob\s+REG_BINARY\s+([0-9A-Fa-f]+)') {
+          $hex = $Matches[1].ToUpper(); foreach ($e in $EM_HEX) { if ($hex.Contains($e)) { $hits += , @{ Key = $key; User = $p.Name }; break } }
+        }
+      }
+    }
+  }
+  return , $hits
+}
+function Get-Profile($path) { foreach ($p in $profiles) { if ("$path".ToLower().StartsWith($p.Home.ToLower() + '\')) { return $p } }; return $null }
 # When elevated, keep downloads out of the user-writable %TEMP%: a new ProgramData folder created by this
 # run is owned by Administrators, so a normal user cannot swap an installer after its checksum is checked
 if ($isAdmin) {
@@ -110,6 +178,7 @@ function Get-PeArch($exe) {
   if ($m -eq 34404) { return 'x64' }; if ($m -eq 332) { return 'x86' }; if ($m -eq 43620) { return 'arm64' }
   return $arch
 }
+function Get-PyRegKeys { $r = @('HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore'); foreach ($u in $userRoots) { $r += "$u\SOFTWARE\Python\PythonCore" }; return , $r }
 # Python version and packages read from disk (patchlevel.h, registry, .dist-info folders) - Python is never run
 function Get-PyInfo($exe) {
   $dir = Split-Path $exe
@@ -117,7 +186,7 @@ function Get-PyInfo($exe) {
   $pl = Join-Path $dir 'include\patchlevel.h'
   if (Test-Path $pl) { $m = Select-String -Path $pl -Pattern '#define PY_VERSION\s+"(\d+\.\d+\.\d+)' | Select-Object -First 1; if ($m) { $info.Version = $m.Matches[0].Groups[1].Value } }
   if (-not $info.Version) {
-    foreach ($k in 'HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore', 'HKCU:\SOFTWARE\Python\PythonCore') {
+    foreach ($k in (Get-PyRegKeys)) {
       if (-not (Test-Path $k)) { continue }
       foreach ($tag in (Get-ChildItem $k)) {
         $ipk = Join-Path $tag.PSPath 'InstallPath'
@@ -128,7 +197,9 @@ function Get-PyInfo($exe) {
   if (-not $info.Version) { $fv = Norm (FileVer $exe); if ($fv -match '^(\d+\.\d+)\.(\d+)$' -and [int]$Matches[2] -lt 1000) { $info.Version = $fv } }
   $sp = @(Join-Path $dir 'Lib\site-packages')
   $short = ''; if ($info.Version -match '^(\d+)\.(\d+)') { $short = "$($Matches[1])$($Matches[2])" }
-  if ($short -and $env:APPDATA) { $sp += Join-Path $env:APPDATA "Python\Python$short\site-packages" }
+  # pip install --user packages live in the Roaming folder of the Python's owner (or of this account)
+  $rp = Get-Profile $exe; $roam = $env:APPDATA; if ($rp) { $roam = $rp.Roaming }
+  if ($short -and $roam) { $sp += Join-Path $roam "Python\Python$short\site-packages" }
   foreach ($s in $sp) {
     if (-not (Test-Path $s)) { continue }
     foreach ($d in (Get-ChildItem $s | Where-Object { $_.PSIsContainer -and $_.Name -match '^(?i)(litellm|pillow|certifi)-([0-9][^-]*)\.dist-info$' })) {
@@ -142,12 +213,17 @@ function Get-PyInfo($exe) {
 }
 
 # Installed programs from the registry (works on every Windows version)
-$apps = @()
-foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall', 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall') {
+$apps = @(); $appSeen = @{}
+$uk = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')
+foreach ($u in $userRoots) { $uk += "$u\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" }
+foreach ($k in $uk) {
   if (Test-Path $k) {
     foreach ($sub in (Get-ChildItem $k)) {
       $p = Get-ItemProperty $sub.PSPath
-      if ($p.DisplayName) { $apps += , @{ Name = "$($p.DisplayName)"; Version = "$($p.DisplayVersion)"; Location = "$($p.InstallLocation)" } }
+      if (-not $p.DisplayName) { continue }
+      $key = ("{0}|{1}|{2}" -f $p.DisplayName, $p.DisplayVersion, $p.InstallLocation).ToLower()
+      if ($appSeen.ContainsKey($key)) { continue }; $appSeen[$key] = 1
+      $apps += , @{ Name = "$($p.DisplayName)"; Version = "$($p.DisplayVersion)"; Location = "$($p.InstallLocation)" }
     }
   }
 }
@@ -175,9 +251,9 @@ function Get-StagedVer($dir, $dll) {
 # Real Python installs: registered with Windows (PEP 514) or on PATH; skips app-bundled copies and virtual envs
 function Find-Pythons {
   $list = @(); $seen = @()
-  foreach ($k in 'HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore', 'HKCU:\SOFTWARE\Python\PythonCore') {
+  foreach ($k in (Get-PyRegKeys)) {
     if (-not (Test-Path $k)) { continue }
-    $scope = 'system'; if ($k -like 'HKCU:*') { $scope = 'user' }
+    $scope = 'system'; if ($k -notlike 'HKLM:*') { $scope = 'user' }
     foreach ($tag in (Get-ChildItem $k)) {
       $ipk = Join-Path $tag.PSPath 'InstallPath'
       if (-not (Test-Path $ipk)) { continue }
@@ -186,7 +262,10 @@ function Find-Pythons {
       if ($ip -and (Test-Path $exe) -and $seen -notcontains $exe.ToLower()) { $seen += $exe.ToLower(); $list += , @{ Exe = $exe; Scope = $scope } }
     }
   }
-  foreach ($exe in (WhereAll 'python.exe')) {
+  # per-user python.org installs of users who are not logged on (their registry is not loaded)
+  $more = @()
+  foreach ($p in $profiles) { $g = Join-Path $p.Local 'Programs\Python\Python3*\python.exe'; if (Test-Path $g) { foreach ($e in (Get-Item $g)) { $more += $e.FullName } } }
+  foreach ($exe in ((WhereAll 'python.exe') + $more)) {
     if ($seen -contains $exe.ToLower() -or (Test-InApp $exe)) { continue }
     $d = Split-Path $exe
     if ((Test-Path (Join-Path $d 'pyvenv.cfg')) -or (Test-Path (Join-Path (Split-Path $d) 'pyvenv.cfg'))) { continue }
@@ -342,15 +421,26 @@ function St($ok) { if ($ok -eq $true) { 'OK' } elseif ($ok -eq $false) { 'UPDATE
 function Invoke-Scan {
   $script:rows = @()
 
-  # Chrome
-  $v = $null
-  foreach ($p in "$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe") { if (-not $v) { $v = FileVer $p } }
-  if (-not $v) { $c = Find-App '^Google Chrome$'; if ($c.Count) { $v = $c[0].Version } }
-  $cdir = $null; foreach ($p in "$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application", "$env:LOCALAPPDATA\Google\Chrome\Application") { if (-not $cdir -and (Test-Path "$p\chrome.exe")) { $cdir = $p } }
-  if (-not $v) { Add-Row 'Browser' 'Google Chrome' '-' $MIN_CHROME '-' '-' }
-  elseif ($legacy) { Add-Row 'Browser' 'Google Chrome' $v $MIN_CHROME 'NO PATCH' 'Chrome 110+ needs Windows 10/11. Remove Chrome or upgrade the OS.' }
-  elseif ((Test-Min $v $MIN_CHROME) -ne $true -and (Test-Min (Get-StagedVer $cdir 'chrome.dll') $MIN_CHROME) -eq $true) { Add-Row 'Browser' 'Google Chrome' "$(Norm $v) (new ready)" $MIN_CHROME 'RESTART' 'Fix downloaded: close and reopen Chrome to finish' }
-  else { $s = St (Test-Min $v $MIN_CHROME); $a = '-'; if ($s -eq 'UPDATE') { $a = 'Update Chrome' }; Add-Row 'Browser' 'Google Chrome' $v $MIN_CHROME $s $a 'chrome' }
+  # Chrome: the machine-wide install and every per-user install (AppData\Local of each profile)
+  $cdirs = @()
+  $cands = @("$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application")
+  foreach ($p in $profiles) { $cands += Join-Path $p.Local 'Google\Chrome\Application' }
+  foreach ($d in $cands) { if ($d -match '^[A-Za-z]:\\' -and $cdirs -notcontains $d -and (Test-Path (Join-Path $d 'chrome.exe'))) { $cdirs += $d } }
+  if (-not $cdirs.Count) {
+    $c = Find-App '^Google Chrome$'
+    if ($c.Count) { Add-Row 'Browser' 'Google Chrome' (Norm $c[0].Version) $MIN_CHROME (St (Test-Min $c[0].Version $MIN_CHROME)) 'Installed but chrome.exe not found: open chrome://settings/help to update' }
+    else { Add-Row 'Browser' 'Google Chrome' '-' $MIN_CHROME '-' '-' }
+  }
+  foreach ($cdir in $cdirs) {
+    $v = Norm (FileVer (Join-Path $cdir 'chrome.exe'))
+    if (-not $v) { $v = Get-StagedVer $cdir 'chrome.dll' }
+    $who = Get-PathOwner $cdir; $label = 'Google Chrome'; if ($who) { $label = "Google Chrome (user $who)" }
+    if ($legacy) { Add-Row 'Browser' $label $v $MIN_CHROME 'NO PATCH' 'Chrome 110+ needs Windows 10/11. Remove Chrome or upgrade the OS.' }
+    elseif ((Test-Min $v $MIN_CHROME) -eq $true) { Add-Row 'Browser' $label $v $MIN_CHROME 'OK' '-' }
+    elseif ((Test-Min (Get-StagedVer $cdir 'chrome.dll') $MIN_CHROME) -eq $true) { Add-Row 'Browser' $label "$v (new ready)" $MIN_CHROME 'RESTART' 'Fix downloaded: close and reopen Chrome to finish' }
+    elseif ($who) { Add-Row 'Browser' $label $v $MIN_CHROME 'MANUAL' "Per-user Chrome (not run as admin). Logged on as $who, open chrome://settings/help - or install the machine-wide Chrome, which takes over" 'manual' }
+    else { Add-Row 'Browser' $label $v $MIN_CHROME (St (Test-Min $v $MIN_CHROME)) 'Update Chrome' 'chrome' $cdir }
+  }
 
   # Edge
   $v = $null; $edir = $null
@@ -363,19 +453,31 @@ function Invoke-Scan {
     else { $s = St (Test-Min $v $req); $a = '-'; if ($s -eq 'UPDATE') { $a = 'Update Edge' }; Add-Row 'Browser' 'Microsoft Edge' $v $req $s $a 'edge' }
   }
 
-  # Firefox (release / ESR)
-  $v = $null; $esr = $false
-  foreach ($p in "$env:ProgramFiles\Mozilla Firefox\firefox.exe", "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe") { if (-not $v) { $v = FileVer $p } }
-  $f = Find-App '^Mozilla Firefox'; if ($f.Count) { if (-not $v) { $v = $f[0].Version }; if ($f[0].Name -match 'ESR') { $esr = $true } }
-  if (-not $v) { Add-Row 'Browser' 'Mozilla Firefox' '-' $MIN_FF '-' '-' }
-  else {
+  # Firefox (release / ESR): machine-wide and per-user installs
+  $fexes = @()
+  $cands = @("$env:ProgramFiles\Mozilla Firefox\firefox.exe", "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe")
+  foreach ($p in $profiles) { $cands += Join-Path $p.Local 'Mozilla Firefox\firefox.exe' }
+  foreach ($e in $cands) { if ($e -match '^[A-Za-z]:\\' -and $fexes -notcontains $e -and (Test-Path $e)) { $fexes += $e } }
+  $f = Find-App '^Mozilla Firefox'
+  if (-not $fexes.Count) {
+    if ($f.Count) { Add-Row 'Browser' 'Mozilla Firefox' (Norm $f[0].Version) $MIN_FF (St (Test-Min $f[0].Version $MIN_FF)) 'Installed but firefox.exe not found: update from Help > About Firefox' }
+    else { Add-Row 'Browser' 'Mozilla Firefox' '-' $MIN_FF '-' '-' }
+  }
+  foreach ($fx in $fexes) {
+    $v = Norm (FileVer $fx)
+    # ESR builds say so in their own files (the uninstall entry name can belong to another install)
+    $esr = $false; $cp = Join-Path (Split-Path $fx) 'defaults\pref\channel-prefs.js'
+    if ((Test-Path $cp) -and (Select-String -Path $cp -Pattern 'app\.update\.channel"\s*,\s*"esr' -Quiet)) { $esr = $true }
+    if (-not $esr) { foreach ($a in $f) { if ($a.Name -match 'ESR' -and $a.Location -and $fx -like "$($a.Location.TrimEnd('\'))\*") { $esr = $true } } }
     $major = ((Norm $v) -split '\.')[0]
     if ($legacy) { $req = $MIN_FF_ESR115; $chan = 'esr115' }
     elseif ($major -eq '115') { $req = $MIN_FF_ESR115; $chan = 'esr' }
     elseif ($major -eq '153' -or $esr) { $req = $MIN_FF_ESR153; $chan = 'esr' }
     else { $req = $MIN_FF; $chan = 'release' }
-    $s = St (Test-Min $v $req); $a = '-'; if ($s -eq 'UPDATE') { $a = "Install latest Firefox ($chan)" }
-    Add-Row 'Browser' 'Mozilla Firefox' $v $req $s $a 'firefox' $chan
+    $who = Get-PathOwner $fx; $label = 'Mozilla Firefox'; if ($esr) { $label = 'Mozilla Firefox ESR' }; if ($who) { $label += " (user $who)" }
+    $s = St (Test-Min $v $req)
+    if ($s -eq 'UPDATE' -and $who) { Add-Row 'Browser' $label $v $req 'MANUAL' "Per-user Firefox (not run as admin). Logged on as ${who}: Help > About Firefox" 'manual' }
+    else { $a = '-'; if ($s -eq 'UPDATE') { $a = "Install latest Firefox ($chan)" }; Add-Row 'Browser' $label $v $req $s $a 'firefox' "$chan|$fx" }
   }
 
   # Java (every installed JDK / JRE)
@@ -555,8 +657,10 @@ function Invoke-Scan {
   } else { Add-Row 'Supply chain' 'OVHcloud CLI' '-' $MIN_OVH '-' '-' }
 
   # eMudhra certificates
-  $bad = Get-ChildItem Cert:\LocalMachine\CA, Cert:\LocalMachine\Root, Cert:\CurrentUser\CA, Cert:\CurrentUser\Root | Where-Object { $_.Subject -match 'EM (DV|OV|EV) TLS CA - G3|EM OV CS CA - G3' }
-  if ($bad) { Add-Row 'Certificate' 'eMudhra compromised intermediates' ("{0} found" -f @($bad).Count) 'none' 'UPDATE' 'Delete the compromised certificates' 'emudhra' }
+  $bad = @(Get-ChildItem Cert:\LocalMachine\CA, Cert:\LocalMachine\Root, Cert:\CurrentUser\CA, Cert:\CurrentUser\Root | Where-Object { $_.Subject -match 'EM (DV|OV|EV) TLS CA - G3|EM OV CS CA - G3' })
+  $ubad = Find-UserEmudhra
+  $cnt = $bad.Count + $ubad.Count
+  if ($cnt) { Add-Row 'Certificate' 'eMudhra compromised intermediates' ("{0} found" -f $cnt) 'none' 'UPDATE' 'Delete the compromised certificates' 'emudhra' }
   else { Add-Row 'Certificate' 'eMudhra compromised intermediates' 'none' 'none' 'OK' '-' }
 
   # Docker images
@@ -718,14 +822,9 @@ function Update-Ovh($exe) {
   return 'FAILED: file in use; old version restored.'
 }
 
-function Get-FirefoxExe {
-  foreach ($p in "$env:ProgramFiles\Mozilla Firefox\firefox.exe", "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe") { if (Test-Path $p) { return $p } }
-  return $null
-}
 # Mozilla's own installer first (always the newest release; winget's catalog can lag behind),
 # signature checked, installed into the same folder, then the version is checked again.
-function Update-Firefox($chan, $req) {
-  $exe = Get-FirefoxExe
+function Update-Firefox($chan, $exe, $req) {
   $prod = 'firefox-latest-ssl'; if ($chan -eq 'esr') { $prod = 'firefox-esr-latest-ssl' }; if ($chan -eq 'esr115') { $prod = 'firefox-esr115-latest-ssl' }
   $osTag = 'win'; if ($is64) { $osTag = 'win64' }
   $f = Download "https://download.mozilla.org/?product=$prod&os=$osTag&lang=en-US" 'firefox-setup.exe'
@@ -741,11 +840,11 @@ function Update-Firefox($chan, $req) {
     $a = '/S'; if ($exe) { $a = "/S /InstallDirectoryPath=`"$(Split-Path $exe)`"" }
     Run $f $a | Out-Null
   }
-  $v = FileVer (Get-FirefoxExe)
+  $v = FileVer $exe
   if ((Test-Min $v $req) -eq $true) { return "Firefox $(Norm $v) installed (signed by Mozilla). Reopen Firefox; tabs are restored." }
   $id = 'Mozilla.Firefox'; if ($chan -ne 'release') { $id = 'Mozilla.Firefox.ESR' }
   if ($chan -ne 'esr115') { Winget $id | Out-Null }
-  $v = FileVer (Get-FirefoxExe)
+  $v = FileVer $exe
   if ((Test-Min $v $req) -eq $true) { return "Firefox $(Norm $v) installed with winget. Reopen Firefox." }
   return "FAILED: Firefox is still $(Norm $v) (needs $req). Update from Help > About Firefox."
 }
@@ -762,6 +861,12 @@ function Remove-Emudhra {
       }
     }
   }
+  # the same certificates in the stores of other logged-on users
+  foreach ($h in (Find-UserEmudhra)) {
+    Log "Delete certificate of $($h.User): $($h.Key)"
+    cmd /c "reg delete `"$($h.Key)`" /f >> `"$logFile`" 2>&1"
+    if ($LASTEXITCODE -eq 0) { $n++ }
+  }
   return "Deleted $n compromised eMudhra certificate(s)."
 }
 
@@ -776,12 +881,11 @@ function Wait-BrowserVer($dir, $exeName, $dll, $req, $seconds) {
   for ($i = 0; $i -lt ($seconds / 5); $i++) { if ((Test-Min (Get-BrowserVer $dir $exeName $dll) $req) -eq $true) { return $true }; Start-Sleep -Seconds 5 }
   return ((Test-Min (Get-BrowserVer $dir $exeName $dll) $req) -eq $true)
 }
-function Update-Chrome($req) {
-  $dir = $null; foreach ($p in "$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application", "$env:LOCALAPPDATA\Google\Chrome\Application") { if (-not $dir -and (Test-Path "$p\chrome.exe")) { $dir = $p } }
+function Update-Chrome($dir, $req) {
+  if (Get-PathOwner $dir) { return 'MANUAL: this is a per-user Chrome; update it from chrome://settings/help (not run as admin).' }
   foreach ($gu in "${env:ProgramFiles(x86)}\Google\Update\GoogleUpdate.exe", "$env:ProgramFiles\Google\Update\GoogleUpdate.exe") {
     if ((Test-Path $gu) -and (Test-SafeToRun $gu)) { Run $gu '/ua /installsource scheduler' | Out-Null; break }
   }
-  if ($dir -like "$env:LOCALAPPDATA*") { return 'MANUAL: this is a per-user Chrome; update it from chrome://settings/help (not run as admin).' }
   if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 120) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') ready. Close and reopen Chrome to finish." }
   Winget 'Google.Chrome' | Out-Null
   if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 30) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') installed with winget. Reopen Chrome." }
@@ -839,7 +943,7 @@ function Update-Python($exe, $target, $scope) {
 
 function Fix-Row($r) {
   switch ($r.Fix) {
-    'chrome' { return (Update-Chrome $r.Req) }
+    'chrome' { return (Update-Chrome $r.Arg $r.Req) }
     'edge' { return (Update-Edge $r.Req) }
     'pyinst' { $p = $r.Arg -split '\|'; return (Update-Python $p[0] $p[1] $p[2]) }
     'certifi' {
@@ -850,7 +954,7 @@ function Fix-Row($r) {
       if ((Test-Min $c $MIN_CERTIFI) -eq $true) { return "pip and certifi $c installed (eMudhra CA removed)." }
       return 'FAILED: pip could not update certifi (no write access or no pip). See log.'
     }
-    'firefox' { return (Update-Firefox $r.Arg $r.Req) }
+    'firefox' { $p = $r.Arg -split '\|'; return (Update-Firefox $p[0] $p[1] $r.Req) }
     'node' {
       $ver = $r.Arg
       $f = Download "https://nodejs.org/dist/v$ver/node-v$ver-$arch.msi" "node-v$ver-$arch.msi"
