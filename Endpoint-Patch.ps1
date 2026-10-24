@@ -17,18 +17,24 @@
 
   Options:  -ScanOnly   report only, change nothing
             -Yes        update without asking (for Intune / GPO / SCCM)
+            -Quick      skip the deep scan of all drives (only standard install locations, PATH and registry)
             -ScanProjects "C:\path\to\code"   also check and update Next.js in project folders
+
+  Deep scan (default): every folder of every local drive is searched once for the files of the checklist
+  software (php.exe, node.exe, python.exe, java.exe, chrome.exe, firefox.exe, Tomcat, OVHcloud CLI, Next.js,
+  LiteLLM, Pillow, certifi), so portable copies, zip installs, virtual environments and copies bundled
+  inside other applications are found too. Versions are read from the files; nothing found is executed.
 
   Compatible with PowerShell 2.0 (Windows 7) through 5.1, and with Constrained Language Mode.
 #>
-param([switch]$ScanOnly, [switch]$Yes, [string]$ScanProjects = "")
+param([switch]$ScanOnly, [switch]$Yes, [switch]$Quick, [string]$ScanProjects = "")
 
 # 32-bit PowerShell on 64-bit Windows sees "Program Files (x86)" as Program Files and a redirected registry,
 # so 64-bit programs would look "not installed": restart in 64-bit PowerShell
 $ps64 = "$env:SystemRoot\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64' -and $MyInvocation.MyCommand.Path -and (Test-Path $ps64)) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $MyInvocation.MyCommand.Path)
-  if ($ScanOnly) { $a += '-ScanOnly' }; if ($Yes) { $a += '-Yes' }; if ($ScanProjects) { $a += '-ScanProjects'; $a += $ScanProjects }
+  if ($ScanOnly) { $a += '-ScanOnly' }; if ($Yes) { $a += '-Yes' }; if ($Quick) { $a += '-Quick' }; if ($ScanProjects) { $a += '-ScanProjects'; $a += $ScanProjects }
   & $ps64 @a
   exit $LASTEXITCODE
 }
@@ -183,7 +189,7 @@ function Get-PyRegKeys { $r = @('HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTW
 # Python version and packages read from disk (patchlevel.h, registry, .dist-info folders) - Python is never run
 function Get-PyInfo($exe) {
   $dir = Split-Path $exe
-  $info = @{ Version = $null; Litellm = $null; Pillow = $null; Certifi = $null; PipCertifi = $null }
+  $info = @{ Version = $null; Litellm = $null; Pillow = $null; Certifi = $null; PipCertifi = $null; Sp = @() }
   $pl = Join-Path $dir 'include\patchlevel.h'
   if (Test-Path $pl) { $m = Select-String -Path $pl -Pattern '#define PY_VERSION\s+"(\d+\.\d+\.\d+)' | Select-Object -First 1; if ($m) { $info.Version = $m.Matches[0].Groups[1].Value } }
   if (-not $info.Version) {
@@ -201,6 +207,7 @@ function Get-PyInfo($exe) {
   # pip install --user packages live in the Roaming folder of the Python's owner (or of this account)
   $rp = Get-Profile $exe; $roam = $env:APPDATA; if ($rp) { $roam = $rp.Roaming }
   if ($short -and $roam) { $sp += Join-Path $roam "Python\Python$short\site-packages" }
+  $info.Sp = $sp
   foreach ($s in $sp) {
     if (-not (Test-Path $s)) { continue }
     foreach ($d in (Get-ChildItem $s | Where-Object { $_.PSIsContainer -and $_.Name -match '^(?i)(litellm|pillow|certifi)-([0-9][^-]*)\.dist-info$' })) {
@@ -266,8 +273,8 @@ function Find-Pythons {
   # per-user python.org installs of users who are not logged on (their registry is not loaded)
   $more = @()
   foreach ($p in $profiles) { $g = Join-Path $p.Local 'Programs\Python\Python3*\python.exe'; if (Test-Path $g) { foreach ($e in (Get-Item $g)) { $more += $e.FullName } } }
-  foreach ($exe in ((WhereAll 'python.exe') + $more)) {
-    if ($seen -contains $exe.ToLower() -or (Test-InApp $exe)) { continue }
+  foreach ($exe in ((WhereAll 'python.exe') + $more + (Get-Deep '^python\.exe$'))) {
+    if ($seen -contains $exe.ToLower() -or (Test-InApp $exe) -or (Get-AppOf $exe)) { continue }
     $d = Split-Path $exe
     if ((Test-Path (Join-Path $d 'pyvenv.cfg')) -or (Test-Path (Join-Path (Split-Path $d) 'pyvenv.cfg'))) { continue }
     $seen += $exe.ToLower()
@@ -412,6 +419,86 @@ function Get-JavaMsiUrl($vendor, $major, $kind) {
   return ''
 }
 
+# ---------------- Deep scan: every local drive ----------------
+# One where.exe pass over every top-level folder of every local drive (the Windows folder, recycle bin and
+# temp folders are skipped). Only paths are collected; versions are read from the files later.
+$DeepNames = @('php.exe', 'node.exe', 'python.exe', 'java.exe', 'ovhcloud.exe', 'catalina.jar', 'chrome.exe', 'msedge.exe', 'firefox.exe', 'next-server.js', 'proxy_server.py', '_imaging.pyd', '_imaging.cp*.pyd', 'cacert.pem')
+$script:deep = @()
+function Invoke-DeepScan {
+  $script:deep = @()
+  if ($Quick) { return }
+  Write-Host 'Deep scan of all local drives - this takes a few minutes...' -ForegroundColor Cyan
+  $skip = @('Windows', '$Recycle.Bin', 'System Volume Information', 'Recovery', 'PerfLogs', 'Config.Msi', 'Documents and Settings', '$WinREAgent', '$SysReset', '$Windows.~BT', '$Windows.~WS')
+  $roots = @()
+  foreach ($disk in (Get-Wmi Win32_LogicalDisk | Where-Object { "$($_.DriveType)" -eq '3' })) {
+    foreach ($d in (Get-ChildItem "$($disk.DeviceID)\" -Force | Where-Object { $_.PSIsContainer })) { if ($skip -notcontains $d.Name) { $roots += $d.FullName } }
+  }
+  $pat = $DeepNames -join ' '; $seen = @{}
+  foreach ($r in $roots) {
+    foreach ($l in (cmd /c "where /r `"$r`" $pat 2>nul")) {
+      $f = "$l".Trim()
+      if (-not $f -or $f -match '\\AppData\\Local\\Temp\\|\\Windows\\Temp\\|\.bak-\d{8}|\\EndpointPatch|\\WindowsApps\\|\\venv\\scripts\\nt\\') { continue }
+      $k = $f.ToLower(); if ($seen.ContainsKey($k)) { continue }; $seen[$k] = 1
+      $script:deep += $f
+    }
+  }
+  Log ("Deep scan: {0} files under {1} folders" -f $script:deep.Count, $roots.Count)
+}
+function Get-Deep($leaf) { $r = @(); foreach ($f in $script:deep) { if ((Split-Path $f -Leaf) -match $leaf) { $r += $f } }; return , $r }
+
+# A copy shipped inside another application (Burp Suite, Playwright, MySQL Shell, LibreOffice, IDEs,
+# SonarQube...) can only be changed by updating that application. Returns its name, or '' if standalone.
+$AppMark = '\\resources\\|\\dependencies\\|\\node_modules\\|\\site-packages\\|\\ms-playwright|\\burpbrowser\\|\\puppeteer\\|\\\.sonar\\|\\\.cache\\|\\install4j\\|\\program\\python-core|\\lib\\python3|\\app-\d|\\runtimes?\\|\\(jbr|jre)\\bin\\|\\zenmap\\|\\arduino15\\|\\driver\\|\\tools\\win64\\|\\tor browser\\'
+function Get-AppOf($path) {
+  $l = "$path"
+  if ($l -notmatch $AppMark) { return '' }
+  if ($l -match '^(.+?)\\Lib\\site-packages\\([^\\]+)\\') { return "Python package '$($Matches[2])' in $($Matches[1])" }
+  if ($l -match '^[A-Za-z]:\\Program Files( \(x86\))?\\([^\\]+)\\([^\\]+)\\') { if (@('bin', 'lib', 'program', 'resources', 'jre', 'jbr', 'app') -contains $Matches[3].ToLower()) { return $Matches[2] }; return "$($Matches[2])\$($Matches[3])" }
+  # markers that are themselves the tool's name
+  if ($l -match '\\(ms-playwright[^\\]*|\.sonar|puppeteer|install4j|arduino15|tor browser)\\') { return $Matches[1] }
+  # otherwise the nearest meaningful folder above the marker (e.g. ...\BurpSuiteCommunity\jre\bin -> BurpSuiteCommunity)
+  $null = $l -match ('^(.*?)(' + $AppMark + ')')
+  $segs = $Matches[1] -split '\\'
+  for ($i = $segs.Count - 1; $i -ge 1; $i--) {
+    if (@('bin', 'lib', 'java', 'tools', 'win64', 'x64', 'program', 'app', 'local', 'roaming', 'appdata', 'programs', 'packages', 'users', 'source code') -notcontains $segs[$i].ToLower()) { return $segs[$i] }
+  }
+  return 'another application'
+}
+# Version of a pip package from its .dist-info folder name
+function Get-DistVer($sp, $pkg) {
+  foreach ($d in (Get-ChildItem $sp | Where-Object { $_.PSIsContainer -and $_.Name -match ('^(?i)' + $pkg + '-([0-9][^-]*)\.dist-info$') })) { $null = $d.Name -match ('^(?i)' + $pkg + '-([0-9][^-]*)\.dist-info$'); return $Matches[1] }
+  return $null
+}
+# python.exe of the environment that owns a site-packages folder (venv, conda env, plain install)
+function Get-EnvPython($sp) {
+  if ("$sp" -match '^(.+)\\Lib\\site-packages$') { foreach ($c in (Join-Path $Matches[1] 'Scripts\python.exe'), (Join-Path $Matches[1] 'python.exe')) { if (Test-Path $c) { return $c } } }
+  return ''
+}
+function Get-NodeReq($v) { $m = ((Norm $v) -split '\.')[0]; if ($NodeMin.ContainsKey($m)) { return $NodeMin[$m] }; return '' }
+function Get-FfReq($v, $esr) { $m = ((Norm $v) -split '\.')[0]; if ($legacy -or $m -eq '115') { return $MIN_FF_ESR115 }; if ($m -eq '153' -or $esr) { return $MIN_FF_ESR153 }; return $MIN_FF }
+# Java version and vendor from the "release" file of a Java home (java.exe is not run)
+function Get-JavaHomeInfo($jh) {
+  $i = @{ Version = ''; Vendor = ''; Major = '' }
+  $rel = Join-Path $jh 'release'
+  if (Test-Path $rel) {
+    foreach ($l in (Get-Content $rel)) {
+      if ($l -match '^JAVA_VERSION="([^"]+)"') { $i.Version = $Matches[1] }
+      if ($l -match '^IMPLEMENTOR="([^"]+)"') { $i.Vendor = $Matches[1] }
+    }
+  }
+  if (-not $i.Version) { $i.Version = Norm (FileVer (Join-Path $jh 'bin\java.exe')) }
+  if ($i.Version -match '^\d+$') { $i.Version = "$($i.Version).0.0" }          # first release of a line is written as just "21"
+  if ($i.Version -match '^1\.8\.0_(\d+)') { $i.Major = '8'; $i.Version = "8u$($Matches[1])" } elseif ($i.Version -match '^8\.0\.(\d{2,})') { $i.Major = '8'; $i.Version = "8u$($Matches[1].Substring(0, $Matches[1].Length - 1))" } else { $i.Major = ($i.Version -split '\.')[0] }
+  return $i
+}
+# One row for a copy inside another application: OK when it already has the fix, otherwise IN APP
+function Add-InAppRow($type, $prod, $path, $ver, $req) {
+  $app = Get-AppOf $path; if (-not $app) { $app = 'another application' }
+  if ($req -and (Test-Min $ver $req) -eq $true) { Add-Row $type "$prod in $app [$path]" $ver $req 'OK' '-' }
+  elseif (-not $req) { Add-Row $type "$prod in $app [$path]" $ver 'supported version' 'IN APP' "End-of-life $prod bundled in $app. Update or remove $app." }
+  else { Add-Row $type "$prod in $app [$path]" $ver $req 'IN APP' "Bundled in ${app}: update $app to a release that ships $prod $req or newer (or remove it if unused)" }
+}
+
 # ---------------- Scan ----------------
 $script:rows = @()
 function Add-Row($Type, $Soft, $Inst, $Req, $Status, $Action, $Fix = '', $Arg = '') {
@@ -420,7 +507,7 @@ function Add-Row($Type, $Soft, $Inst, $Req, $Status, $Action, $Fix = '', $Arg = 
 function St($ok) { if ($ok -eq $true) { 'OK' } elseif ($ok -eq $false) { 'UPDATE' } else { 'CHECK' } }
 
 function Invoke-Scan {
-  $script:rows = @()
+  $script:rows = @(); $script:spSeen = @()
 
   # Chrome: the machine-wide install and every per-user install (AppData\Local of each profile)
   $cdirs = @()
@@ -442,6 +529,14 @@ function Invoke-Scan {
     elseif ($who) { Add-Row 'Browser' $label $v $MIN_CHROME 'MANUAL' "Per-user Chrome (not run as admin). Logged on as $who, open chrome://settings/help - or install the machine-wide Chrome, which takes over" 'manual' }
     else { Add-Row 'Browser' $label $v $MIN_CHROME (St (Test-Min $v $MIN_CHROME)) 'Update Chrome' 'chrome' $cdir }
   }
+  # Deep scan: portable copies and Chrome/Chromium bundled in other applications (Burp Suite, Playwright...)
+  foreach ($e in (Get-Deep '^chrome\.exe$')) {
+    if ($e -match '\\Google\\Chrome\\Application\\') { continue }
+    $v = Norm (FileVer $e)
+    if (Get-AppOf $e) { Add-InAppRow 'Browser' 'Chromium' $e $v $MIN_CHROME }
+    elseif ((Test-Min $v $MIN_CHROME) -eq $true) { Add-Row 'Browser' "Chrome/Chromium copy [$e]" $v $MIN_CHROME 'OK' '-' }
+    else { Add-Row 'Browser' "Chrome/Chromium copy [$e]" $v $MIN_CHROME 'MANUAL' 'Portable or unpacked copy without an updater: delete it or replace it with a current build' 'manual' }
+  }
 
   # Edge
   $v = $null; $edir = $null
@@ -452,6 +547,13 @@ function Invoke-Scan {
     $req = $MIN_EDGE; if ((Norm $v) -like '152.*') { $req = $MIN_EDGE_EXT }
     if ((Test-Min $v $req) -ne $true -and (Test-Min (Get-StagedVer $edir 'msedge.dll') $req) -eq $true) { Add-Row 'Browser' 'Microsoft Edge' "$(Norm $v) (new ready)" $req 'RESTART' 'Fix downloaded: close and reopen Edge to finish' }
     else { $s = St (Test-Min $v $req); $a = '-'; if ($s -eq 'UPDATE') { $a = 'Update Edge' }; Add-Row 'Browser' 'Microsoft Edge' $v $req $s $a 'edge' }
+  }
+  foreach ($e in (Get-Deep '^msedge\.exe$')) {
+    if ($e -match '\\Microsoft\\(Edge|EdgeCore|EdgeUpdate|EdgeWebView|Edge Beta|Edge Dev|Edge SxS)\\') { continue }
+    $v = Norm (FileVer $e)
+    if (Get-AppOf $e) { Add-InAppRow 'Browser' 'Edge' $e $v $MIN_EDGE }
+    elseif ((Test-Min $v $MIN_EDGE) -eq $true) { Add-Row 'Browser' "Edge copy [$e]" $v $MIN_EDGE 'OK' '-' }
+    else { Add-Row 'Browser' "Edge copy [$e]" $v $MIN_EDGE 'MANUAL' 'Unpacked copy without an updater: delete it or replace it with a current build' 'manual' }
   }
 
   # Firefox (release / ESR): machine-wide and per-user installs
@@ -479,6 +581,16 @@ function Invoke-Scan {
     $s = St (Test-Min $v $req)
     if ($s -eq 'UPDATE' -and $who) { Add-Row 'Browser' $label $v $req 'MANUAL' "Per-user Firefox (not run as admin). Logged on as ${who}: Help > About Firefox" 'manual' }
     else { $a = '-'; if ($s -eq 'UPDATE') { $a = "Install latest Firefox ($chan)" }; Add-Row 'Browser' $label $v $req $s $a 'firefox' "$chan|$fx" }
+  }
+  # Deep scan: portable Firefox and Firefox-based browsers bundled elsewhere (Tor Browser...)
+  foreach ($e in (Get-Deep '^firefox\.exe$')) {
+    if ($fexes -contains $e) { continue }
+    $v = Norm (FileVer $e)
+    $esr = [bool](Select-String -Path (Join-Path (Split-Path $e) 'defaults\pref\channel-prefs.js') -Pattern 'app\.update\.channel"\s*,\s*"esr' -Quiet)
+    $req = Get-FfReq $v $esr
+    if (Get-AppOf $e) { Add-InAppRow 'Browser' 'Firefox' $e $v $req }
+    elseif ((Test-Min $v $req) -eq $true) { Add-Row 'Browser' "Firefox copy [$e]" $v $req 'OK' '-' }
+    else { Add-Row 'Browser' "Firefox copy [$e]" $v $req 'MANUAL' "Portable copy: open it and use Help > About Firefox, or delete it" 'manual' }
   }
 
   # Java (every installed JDK / JRE)
@@ -523,29 +635,61 @@ function Invoke-Scan {
       }
     } else { Add-Row 'Runtime' $name $n 'Supported LTS (25/21/17/11)' 'MANUAL' 'Non-LTS or end-of-life Java. Move to a supported LTS (major version change).' 'manual' }
   }
-
-  # Node.js
-  $v = $null; $nodePath = ''; $inApp = @()
-  foreach ($n in (WhereAll 'node.exe')) {
-    if (Test-InApp $n) { $inApp += $n; continue }          # Node.js shipped inside another app: not ours to patch
-    if (-not $nodePath) { $nodePath = $n }
+  # Deep scan: Java homes not registered with Windows (zip installs, runtimes bundled in IDEs and tools).
+  # Version and vendor come from each Java home's "release" file.
+  $regHomes = @(); $regVers = @()
+  foreach ($j in $javas) { if ($j.Location) { $regHomes += $j.Location.TrimEnd('\').ToLower() }; $regVers += "$($j.Version)" }
+  $jseen = @()
+  foreach ($e in (Get-Deep '^java\.exe$')) {
+    $jh = Split-Path (Split-Path $e)
+    if ($jh -match '\\jre$' -and (Test-Path (Join-Path (Split-Path $jh) 'bin\java.exe'))) { continue }      # the jre inside a JDK 8
+    if ($regHomes -contains $jh.ToLower() -or $jseen -contains $jh.ToLower()) { continue }; $jseen += $jh.ToLower()
+    $ji = Get-JavaHomeInfo $jh
+    $dup = $false; foreach ($rv in $regVers) { if ($ji.Version -and $rv -like "$(Norm $ji.Version)*") { $dup = $true } }
+    if ($dup -and -not (Get-AppOf $e)) { continue }                     # a registered install that has no InstallLocation
+    $req = ''; if ($ji.Major -eq '8') { $req = '8.0.511' } elseif ($JavaMin.ContainsKey($ji.Major)) { $req = $JavaMin[$ji.Major] }
+    $label = "Java $($ji.Vendor)".Trim()
+    if (Get-AppOf $e) { Add-InAppRow 'Runtime' $label $e $ji.Version $req; continue }
+    $tag = "$label [$jh]"
+    if (-not $req) { Add-Row 'Runtime' $tag $ji.Version 'Supported LTS (25/21/17/11)' 'MANUAL' 'Non-LTS or end-of-life Java (unpacked zip). Move to a supported LTS.' 'manual'; continue }
+    if ((Test-Min $ji.Version $req) -eq $true) { Add-Row 'Runtime' $tag $ji.Version $req 'OK' '-'; continue }
+    if ($ji.Vendor -match 'Adoptium' -and $ji.Major -ne '8' -and (Test-AdminOnly $jh)) {
+      $latest = Get-JavaLatest '' 'temurin' $ji.Major
+      if ($latest -and (Test-Min $latest $req) -ne $true -and (Test-Min $ji.Version (Norm $latest)) -eq $true) { Add-Row 'Runtime' $tag $ji.Version $req 'NO FIX YET' "Already on Temurin's newest build ($(Norm $latest)); $req not released yet. Re-run later." }
+      else { Add-Row 'Runtime' $tag $ji.Version $req 'UPDATE' "Replace with the newest Temurin $($ji.Major) zip (checksum verified, backup made)" 'javazip' "$jh|$($ji.Major)" }
+    }
+    else { $vn = $ji.Vendor; if (-not $vn) { $vn = 'the vendor' }; Add-Row 'Runtime' $tag $ji.Version $req 'MANUAL' "Unpacked Java (no installer). As its owner, replace the folder with Java $req from $vn" 'manual' }
   }
-  if ($nodePath) { $v = Norm (FileVer $nodePath) }
-  if (-not $v) { $na = Find-App '^Node\.js$'; if ($na.Count) { $v = $na[0].Version } }
-  foreach ($n in $inApp) { Add-Row 'Runtime' "Node.js (inside an app) [$n]" (Norm (FileVer $n)) '-' 'IN APP' 'Bundled inside another application: update that application' }
-  if (-not $v) { Add-Row 'Runtime' 'Node.js' '-' '22.23.4 / 24.22.1 / 26.12.1' '-' '-' }
-  else {
-    $major = ((Norm $v) -split '\.')[0]
-    if ($NodeMin.ContainsKey($major)) { $req = $NodeMin[$major] } else { $req = $NodeMin['24'] }
-    $ok = $false; if ($NodeMin.ContainsKey($major)) { $ok = Test-Min $v $req }
-    $s = St $ok; $a = '-'
-    if ($legacy) { Add-Row 'Runtime' 'Node.js' $v $req 'NO PATCH' 'Node.js 22+ needs Windows 10/11.' }
-    elseif ($nodePath -match '\\nvm') { if ($ok) { Add-Row 'Runtime' 'Node.js (nvm)' $v $req 'OK' '-' } else { Add-Row 'Runtime' 'Node.js (nvm)' $v $req 'MANUAL' "nvm is user-writable, so it is not run as admin. In a normal PowerShell run:  nvm install $req; nvm use $req" 'manual' } }
-    else { if (-not $ok) { $a = "Install Node.js $req" }; Add-Row 'Runtime' 'Node.js' $v $req $s $a 'node' $req }
+
+  # Node.js: every user's PATH plus the deep scan. Copies shipped inside other applications are IN APP.
+  $nodes = @(); $nl = @()
+  foreach ($n in ((WhereAll 'node.exe') + (Get-Deep '^node\.exe$'))) { if ($nl -notcontains $n) { $nl += $n } }
+  foreach ($n in $nl) {
+    if ((Test-InApp $n) -or (Get-AppOf $n)) { $nv = Norm (FileVer $n); Add-InAppRow 'Runtime' 'Node.js' $n $nv (Get-NodeReq $nv); continue }
+    $nodes += $n
+  }
+  if (-not $nodes.Count) {
+    $na = Find-App '^Node\.js$'
+    if ($na.Count) { $nv = Norm $na[0].Version; $nr = Get-NodeReq $nv; if (-not $nr) { $nr = $NodeMin['24'] }; Add-Row 'Runtime' 'Node.js' $nv $nr (St (Test-Min $nv $nr)) "Install Node.js $nr" 'node' $nr }
+    else { Add-Row 'Runtime' 'Node.js' '-' '22.23.4 / 24.22.1 / 26.12.1' '-' '-' }
+  }
+  foreach ($n in $nodes) {
+    $nv = Norm (FileVer $n); $nr = Get-NodeReq $nv
+    $msi = ($n -match '^[A-Za-z]:\\Program Files( \(x86\))?\\nodejs\\node\.exe$')
+    $zip = ((Test-Path (Join-Path (Split-Path $n) 'npm.cmd')) -and (Test-SafeToRun $n))
+    $tag = "Node.js [$n]"
+    if ($legacy) { Add-Row 'Runtime' $tag $nv '22.23.4' 'NO PATCH' 'Node.js 22+ needs Windows 10/11.' }
+    elseif (-not $nr -and $msi) { Add-Row 'Runtime' $tag $nv $NodeMin['24'] 'UPDATE' "Node.js $nv is end-of-life: install Node.js $($NodeMin['24']) LTS" 'node' $NodeMin['24'] }
+    elseif (-not $nr) { Add-Row 'Runtime' $tag $nv '22.23.4 / 24.22.1 / 26.12.1' 'MANUAL' "Node.js $nv is end-of-life: replace it with 22, 24 or 26 (major version change)" 'manual' }
+    elseif ((Test-Min $nv $nr) -eq $true) { Add-Row 'Runtime' $tag $nv $nr 'OK' '-' }
+    elseif ($n -match '\\nvm') { Add-Row 'Runtime' "Node.js (nvm) [$n]" $nv $nr 'MANUAL' "nvm is user-writable, so it is not run as admin. In a normal PowerShell run:  nvm install $nr; nvm use $nr" 'manual' }
+    elseif ($msi) { Add-Row 'Runtime' $tag $nv $nr 'UPDATE' "Install Node.js $nr" 'node' $nr }
+    elseif ($zip) { Add-Row 'Runtime' $tag $nv $nr 'UPDATE' "Replace with the verified node-v$nr zip (same folder, backup made)" 'nodezip' "$n|$nr" }
+    else { Add-Row 'Runtime' $tag $nv $nr 'MANUAL' "Unpacked Node.js in a user-writable folder. As its owner, replace it with node-v$nr-win-x64.zip from nodejs.org" 'manual' }
   }
 
   # PHP (every php.exe found)
-  $phps = WhereAll 'php.exe'
+  $phps = @(WhereAll 'php.exe') + (Get-Deep '^php\.exe$')
   foreach ($pat in 'C:\xampp\php\php.exe', 'C:\wamp\bin\php\*\php.exe', 'C:\wamp64\bin\php\*\php.exe', 'C:\laragon\bin\php\*\php.exe', 'C:\php\php.exe', 'C:\php*\php.exe', 'C:\tools\php*\php.exe', "$env:ProgramFiles\PHP\*\php.exe", "${env:ProgramFiles(x86)}\PHP\*\php.exe") {
     if (Test-Path $pat) { foreach ($i in (Get-Item $pat)) { $phps += $i.FullName } }
   }
@@ -567,6 +711,7 @@ function Invoke-Scan {
   foreach ($pat in "$env:ProgramFiles\Apache Software Foundation\Tomcat*\RELEASE-NOTES", "${env:ProgramFiles(x86)}\Apache Software Foundation\Tomcat*\RELEASE-NOTES", 'C:\tomcat*\RELEASE-NOTES', 'C:\apache-tomcat*\RELEASE-NOTES', 'C:\xampp\tomcat\RELEASE-NOTES') {
     if (Test-Path $pat) { foreach ($rn in (Get-Item $pat)) { $tom += , @{ Dir = $rn.DirectoryName; Version = '' } } }
   }
+  foreach ($cj in (Get-Deep '^catalina\.jar$')) { $td = Split-Path (Split-Path $cj); if (Test-Path (Join-Path $td 'RELEASE-NOTES')) { $tom += , @{ Dir = $td; Version = '' } } }
   if (-not $tom.Count) { Add-Row 'Server' 'Apache Tomcat' '-' '11.0.27 / 10.1.61 / 9.0.123' '-' '-' }
   $seen = @()
   foreach ($t in $tom) {
@@ -574,7 +719,8 @@ function Invoke-Scan {
     $m = Select-String -Path (Join-Path $t.Dir 'RELEASE-NOTES') -Pattern 'Apache Tomcat Version\s+([\d\.]+)' | Select-Object -First 1
     $n = $null; if ($m) { $n = $m.Matches[0].Groups[1].Value } else { $n = Norm $t.Version }
     $br = ($n -split '\.')[0..1] -join '.'
-    if ($TomcatMin.ContainsKey($br)) {
+    if (Get-AppOf (Join-Path $t.Dir 'lib\catalina.jar')) { $tr = ''; if ($TomcatMin.ContainsKey($br)) { $tr = $TomcatMin[$br] }; Add-InAppRow 'Server' 'Tomcat' $t.Dir $n $tr }
+    elseif ($TomcatMin.ContainsKey($br)) {
       $req = $TomcatMin[$br]; $ok = Test-Min $n $req; $s = St $ok; $a = '-'
       if ($ok -eq $false) { $a = "Update Tomcat to $req (conf\ and webapps\ kept, backup made)" }
       Add-Row 'Server' "Apache Tomcat [$($t.Dir)]" $n $req $s $a 'tomcat' "$($t.Dir)|$req"
@@ -600,6 +746,7 @@ function Invoke-Scan {
     }
     # Everything below is read from disk: this elevated script never runs a Python that users can modify
     $pinfo = Get-PyInfo $py
+    foreach ($s in $pinfo.Sp) { $script:spSeen += "$s".ToLower() }
     $lite = $pinfo.Litellm; $pil = $pinfo.Pillow; $cert = $pinfo.Certifi
     $bad = ($lite -eq $BAD_LITELLM)
     $owner = Get-PathOwner $py
@@ -645,17 +792,64 @@ function Invoke-Scan {
     else { Add-Row 'Library' "Python: Pillow [$py]" $pil $MIN_PILLOW 'MANUAL' "$userCmd run:  `"$py`" -m pip install -U `"pillow>=$MIN_PILLOW`"" 'manual' }
   }
 
+  # Deep scan: Pythons bundled inside other applications (MySQL Shell, LibreOffice, Nmap, Arduino...)
+  $pyIn = @()
+  foreach ($exe in (Get-Deep '^python\.exe$')) {
+    if (-not ((Test-InApp $exe) -or (Get-AppOf $exe))) { continue }
+    $d = Split-Path $exe
+    if ((Test-Path (Join-Path $d 'pyvenv.cfg')) -or (Test-Path (Join-Path (Split-Path $d) 'pyvenv.cfg'))) { continue }
+    if ($pyIn -contains $d.ToLower()) { continue }; $pyIn += $d.ToLower()
+    $pv = (Get-PyInfo $exe).Version; if (-not $pv) { $pv = Norm (FileVer $exe) }
+    $pbr = ($pv -split '\.')[0..1] -join '.'; $req = ''
+    if ($PyMin.ContainsKey($pbr)) { $req = $PyMin[$pbr] } elseif ((Test-Min $pv '3.16') -eq $true) { $req = $pv }
+    Add-InAppRow 'Language' 'Python' $exe $pv $req
+  }
+
+  # Deep scan: Pillow, LiteLLM and certifi in virtual environments, user site-packages and applications
+  $pk = @{}
+  foreach ($f in (Get-Deep '^_imaging')) { if ($f -match '^(.+)\\PIL\\_imaging[^\\]*$') { $pk[$Matches[1]] = 1 } }
+  foreach ($f in (Get-Deep '^proxy_server\.py$')) { if ($f -match '^(.+)\\litellm\\proxy\\proxy_server\.py$') { $pk[$Matches[1]] = 1 } }
+  foreach ($f in (Get-Deep '^cacert\.pem$')) { if ($f -match '^(.+)\\certifi\\cacert\.pem$' -and $f -notmatch '\\_vendor\\') { $pk[$Matches[1]] = 1 } }
+  foreach ($sp in $pk.Keys) {
+    if ($script:spSeen -contains "$sp".ToLower()) { continue }
+    $envPy = Get-EnvPython $sp
+    $userSite = ("$sp" -match '\\local-packages\\|\\AppData\\Roaming\\Python\\')
+    $app = ''
+    if ($envPy) { $app = Get-AppOf $envPy } elseif (-not $userSite) { $app = Get-AppOf "$sp\"; if (-not $app) { $app = 'an application' } }
+    $owner = Get-PathOwner $sp; $as = 'In a normal (non-admin) PowerShell'; if ($owner) { $as = "Logged on as $owner, in a normal PowerShell" }
+    $pipCmd = 'py -m pip install --user -U'; if ($envPy) { $pipCmd = "`"$envPy`" -m pip install -U" }
+    $safe = ($envPy -and (Test-SafeToRun $envPy))
+    $where = "[$sp]"
+    $lv = Get-DistVer $sp 'litellm'
+    if ($lv -eq $BAD_LITELLM) { Add-Row 'Supply chain' "Python: litellm $where" $lv "not $BAD_LITELLM ($GOOD_LITELLM)" 'COMPROMISED' 'Security incident: disconnect from network, report to security, rebuild the machine, rotate all secrets.' }
+    elseif ($lv) { Add-Row 'Supply chain' "Python: litellm $where" $lv "not $BAD_LITELLM" 'OK' '-' }
+    $pl = Get-DistVer $sp 'pillow'
+    if ($pl) {
+      if ((Test-Min $pl $MIN_PILLOW) -eq $true) { Add-Row 'Library' "Python: Pillow $where" $pl $MIN_PILLOW 'OK' '-' }
+      elseif ($app) { Add-Row 'Library' "Python: Pillow in $app $where" $pl $MIN_PILLOW 'IN APP' "Bundled in ${app}: update $app" }
+      elseif ($safe -and $lv -ne $BAD_LITELLM) { Add-Row 'Library' "Python: Pillow $where" $pl $MIN_PILLOW 'UPDATE' "pip install pillow>=$MIN_PILLOW" 'pillow' $envPy }
+      else { Add-Row 'Library' "Python: Pillow $where" $pl $MIN_PILLOW 'MANUAL' "$as run:  $pipCmd `"pillow>=$MIN_PILLOW`"" 'manual' }
+    }
+    $cv = Get-DistVer $sp 'certifi'
+    if (-not $cv) { $ci = Join-Path $sp 'certifi\__init__.py'; if (Test-Path $ci) { $m = Select-String -Path $ci -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1; if ($m) { $cv = $m.Matches[0].Groups[1].Value } } }
+    if ($cv -and (Test-Min $cv $MIN_CERTIFI) -ne $true) {
+      if ($app) { Add-Row 'Certificate' "Python certifi in $app $where" $cv $MIN_CERTIFI 'IN APP' "Bundled in ${app}: update $app (its CA list still trusts the eMudhra CA)" }
+      elseif ($safe -and $lv -ne $BAD_LITELLM) { Add-Row 'Certificate' "Python certifi $where" $cv $MIN_CERTIFI 'UPDATE' 'pip install -U pip certifi (drops the eMudhra CA)' 'certifi' $envPy }
+      else { Add-Row 'Certificate' "Python certifi $where" $cv $MIN_CERTIFI 'MANUAL' "$as run:  $pipCmd certifi" 'manual' }
+    }
+  }
+
   # GitLab (Linux only)
   Add-Row 'Server' 'GitLab (self-managed)' '-' '19.5.1 / 19.4.3 / ... / 18.11.13' '-' 'Linux only'
 
   # OVHcloud CLI
-  $ov = WhereAll 'ovhcloud.exe'
-  if ($ov.Count) {
+  $ov = @(); foreach ($o in ((WhereAll 'ovhcloud.exe') + (Get-Deep '^ovhcloud\.exe$'))) { if ($ov -notcontains $o) { $ov += $o } }
+  foreach ($o in $ov) {
     # Identified by fingerprint against the official 0.16.0 binaries - the binary is not run
-    $isFixed = $OVH_EXE_SHA -contains (Get-Sha256 $ov[0])
-    if ($isFixed) { Add-Row 'Supply chain' "OVHcloud CLI [$($ov[0])]" $MIN_OVH $MIN_OVH 'OK' '-' }
-    else { Add-Row 'Supply chain' "OVHcloud CLI [$($ov[0])]" "not $MIN_OVH" $MIN_OVH 'UPDATE' "Replace with the verified $MIN_OVH binary" 'ovh' $ov[0] }
-  } else { Add-Row 'Supply chain' 'OVHcloud CLI' '-' $MIN_OVH '-' '-' }
+    if ($OVH_EXE_SHA -contains (Get-Sha256 $o)) { Add-Row 'Supply chain' "OVHcloud CLI [$o]" $MIN_OVH $MIN_OVH 'OK' '-' }
+    else { Add-Row 'Supply chain' "OVHcloud CLI [$o]" "not $MIN_OVH" $MIN_OVH 'UPDATE' "Replace with the verified $MIN_OVH binary" 'ovh' $o }
+  }
+  if (-not $ov.Count) { Add-Row 'Supply chain' 'OVHcloud CLI' '-' $MIN_OVH '-' '-' }
 
   # eMudhra certificates
   $bad = @(Get-ChildItem Cert:\LocalMachine\CA, Cert:\LocalMachine\Root, Cert:\CurrentUser\CA, Cert:\CurrentUser\Root | Where-Object { $_.Subject -match 'EM (DV|OV|EV) TLS CA - G3|EM OV CS CA - G3' })
@@ -685,21 +879,23 @@ function Invoke-Scan {
     }
   } else { Add-Row 'Container' 'Docker images' '-' 'pulled after 21 Oct 2026' '-' '-' }
 
-  # Next.js (only when -ScanProjects is given)
-  if ($ScanProjects -and (Test-Path $ScanProjects)) {
-    $found = $false
-    foreach ($pj in (Get-ChildItem $ScanProjects -Recurse -Filter package.json | Where-Object { $_.FullName -match '\\node_modules\\next\\package\.json$' })) {
-      $m = Select-String -Path $pj.FullName -Pattern '"version"\s*:\s*"([^"]+)"' | Select-Object -First 1
-      if ($m) {
-        $found = $true; $v = $m.Matches[0].Groups[1].Value; $req = '16.4.1'; if ($v -like '15.*') { $req = '15.5.28' }
-        $proj = Split-Path (Split-Path (Split-Path $pj.FullName -Parent) -Parent) -Parent
-        # npm runs the project's own install scripts, so it is never run as admin
-        if ((Test-Min $v $req) -eq $true) { Add-Row 'Library' "Next.js [$proj]" $v $req 'OK' '-' }
-        else { Add-Row 'Library' "Next.js [$proj]" $v $req 'MANUAL' "In a normal (non-admin) prompt:  cd `"$proj`"; npm install next@$req" 'manual' }
-      }
+  # Next.js: projects found by the deep scan, plus -ScanProjects
+  $nx = @()
+  foreach ($f in (Get-Deep '^next-server\.js$')) { if ($f -match '^(.+)\\node_modules\\next\\dist\\server\\next-server\.js$' -and $Matches[1] -notmatch '\\node_modules(\\|$)') { $nx += (Join-Path $Matches[1] 'node_modules\next\package.json') } }
+  if ($ScanProjects -and (Test-Path $ScanProjects)) { foreach ($pj in (Get-ChildItem $ScanProjects -Recurse -Filter package.json | Where-Object { $_.FullName -match '\\node_modules\\next\\package\.json$' })) { $nx += $pj.FullName } }
+  $found = $false; $nseen = @()
+  foreach ($pj in $nx) {
+    if ($nseen -contains $pj.ToLower()) { continue }; $nseen += $pj.ToLower()
+    $m = Select-String -Path $pj -Pattern '"version"\s*:\s*"([^"]+)"' | Select-Object -First 1
+    if ($m) {
+      $found = $true; $v = $m.Matches[0].Groups[1].Value; $req = '16.4.1'; if ($v -like '15.*') { $req = '15.5.28' }
+      $proj = Split-Path (Split-Path (Split-Path $pj -Parent) -Parent) -Parent
+      # npm runs the project's own install scripts, so it is never run as admin
+      if ((Test-Min $v $req) -eq $true) { Add-Row 'Library' "Next.js [$proj]" $v $req 'OK' '-' }
+      else { Add-Row 'Library' "Next.js [$proj]" $v $req 'MANUAL' "In a normal (non-admin) prompt:  cd `"$proj`"; npm install next@$req" 'manual' }
     }
-    if (-not $found) { Add-Row 'Library' 'Next.js' '-' '16.4.1 / 15.5.28' '-' '-' }
-  } else { Add-Row 'Library' 'Next.js' '-' '16.4.1 / 15.5.28' '-' 'Use -ScanProjects to check' }
+  }
+  if (-not $found) { $a = '-'; if ($Quick -and -not $ScanProjects) { $a = 'Run without -Quick (or use -ScanProjects) to check projects' }; Add-Row 'Library' 'Next.js' '-' '16.4.1 / 15.5.28' '-' $a }
 }
 
 function Show-Table($title) {
@@ -923,6 +1119,57 @@ function Update-Edge($req) {
   return "FAILED: Edge is still $(Get-BrowserVer $dir 'msedge.exe' 'msedge.dll') (needs $req). Update from edge://settings/help."
 }
 
+# Node.js unpacked from a zip: replaced in place with the official zip (SHA-256 from nodejs.org), backup kept
+function Update-NodeZip($exe, $ver) {
+  $dir = Split-Path $exe
+  if (-not (Test-SafeToRun $exe)) { return 'FAILED: folder is user-writable; replace it from a normal prompt. Nothing changed.' }
+  $na = Get-PeArch $exe; if ($na -ne 'x86' -and $na -ne 'arm64') { $na = 'x64' }
+  $name = "node-v$ver-win-$na.zip"
+  $sums = Download "https://nodejs.org/dist/v$ver/SHASUMS256.txt" "node-$ver-SHASUMS256.txt"
+  $exp = ''; if ($sums) { foreach ($l in (Get-Content $sums)) { if ($l -match '^([0-9a-f]{64})\s+(\S+)$' -and $Matches[2] -eq $name) { $exp = $Matches[1] } } }
+  if (-not $exp) { return "FAILED: no published checksum for $name" }
+  $zip = Download "https://nodejs.org/dist/v$ver/$name" $name
+  if (-not $zip -or (Get-Sha256 $zip) -ne $exp) { return "FAILED: could not download a verified $name" }
+  $tmp = Join-Path $dl "node-$ver-new"
+  if (-not (Expand-Zip $zip $tmp)) { return 'FAILED: could not unzip. Nothing changed.' }
+  $new = Join-Path $tmp "node-v$ver-win-$na"
+  if (-not (Test-Path (Join-Path $new 'node.exe'))) { return 'FAILED: package layout not recognised. Nothing changed.' }
+  $bak = "$dir.bak-$stamp"
+  if (-not (Robo $dir $bak) -or -not (Test-Path (Join-Path $bak 'node.exe'))) { return 'FAILED: could not back up the folder. Nothing changed.' }
+  Get-Wmi Win32_Process | Where-Object { "$($_.ExecutablePath)" -eq $exe } | ForEach-Object { Log "Stop node $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force }
+  Start-Sleep -Seconds 2
+  if ((Robo $new $dir) -and (Norm (FileVer $exe)) -eq $ver) { return "Node.js $ver installed in $dir (global npm packages kept). Backup: $bak" }
+  Robo $bak $dir | Out-Null
+  return "FAILED: files in use; old Node.js restored. Backup: $bak"
+}
+
+# Temurin Java unpacked from a zip: the folder is swapped for the newest verified Temurin zip, backup kept
+function Update-JavaZip($jh, $major) {
+  if (-not (Test-AdminOnly $jh)) { return 'FAILED: folder is user-writable; replace it from a normal prompt. Nothing changed.' }
+  $kind = 'jdk'; if (-not (Test-Path (Join-Path $jh 'bin\javac.exe'))) { $kind = 'jre' }
+  $a = 'x64'; $pa = Get-PeArch (Join-Path $jh 'bin\java.exe'); if ($pa -eq 'x86') { $a = 'x86' }; if ($pa -eq 'arm64') { $a = 'aarch64' }
+  $f = Download "https://api.adoptium.net/v3/assets/latest/$major/hotspot?image_type=$kind&os=windows&architecture=$a" "adoptium-$major-$kind-$a.json"
+  if (-not $f) { return 'FAILED: could not reach adoptium.net' }
+  $txt = (Get-Content $f) -join ' '
+  if ($txt -notmatch '"package"\s*:\s*\{[^}]*?"checksum"\s*:\s*"([0-9a-f]{64})"[^}]*?"link"\s*:\s*"([^"]+\.zip)"') { return 'FAILED: no Windows zip listed by adoptium.net' }
+  $sum = $Matches[1]; $url = $Matches[2]; $name = Split-Path $url -Leaf
+  $zip = Download $url $name
+  if (-not $zip -or (Get-Sha256 $zip) -ne $sum) { return "FAILED: could not download a verified $name" }
+  $tmp = Join-Path $dl "java-$major-new"
+  if (-not (Expand-Zip $zip $tmp)) { return 'FAILED: could not unzip. Nothing changed.' }
+  $new = Get-ChildItem $tmp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+  if (-not $new -or -not (Test-Path (Join-Path $new.FullName 'bin\java.exe'))) { return 'FAILED: package layout not recognised. Nothing changed.' }
+  Get-Wmi Win32_Process | Where-Object { "$($_.ExecutablePath)" -like "$jh\*" } | ForEach-Object { Log "Stop $($_.Name) $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force }
+  Start-Sleep -Seconds 2
+  $bak = "$jh.bak-$stamp"
+  Move-Item -LiteralPath $jh -Destination $bak
+  if (Test-Path $jh) { return 'FAILED: Java folder is in use. Nothing changed.' }
+  if ((Robo $new.FullName $jh) -and (Test-Path (Join-Path $jh 'bin\java.exe'))) { return "Java $((Get-JavaHomeInfo $jh).Version) installed in $jh (same path). Restart Java apps. Backup: $bak" }
+  if (Test-Path $jh) { Remove-Item $jh -Recurse -Force }
+  Move-Item -LiteralPath $bak -Destination $jh
+  return "FAILED: could not copy the new Java; old Java restored."
+}
+
 # Python: official python.org installer for the same branch, run over the existing install (same folder, same scope)
 function Update-Python($exe, $target, $scope) {
   $dir = Split-Path $exe
@@ -981,6 +1228,8 @@ function Fix-Row($r) {
       cmd /c "`"$($r.Arg)`" -m pip install --upgrade `"pillow>=$MIN_PILLOW`" >> `"$logFile`" 2>&1"
       if ($LASTEXITCODE -eq 0) { return "Pillow upgraded to $MIN_PILLOW+." } return 'FAILED: Pillow 13 may need a newer Python. See log.'
     }
+    'nodezip' { $p = $r.Arg -split '\|'; return (Update-NodeZip $p[0] $p[1]) }
+    'javazip' { $p = $r.Arg -split '\|'; return (Update-JavaZip $p[0] $p[1]) }
     'php' { $p = $r.Arg -split '\|'; return (Update-Php $p[0] $p[1]) }
     'tomcat' { $p = $r.Arg -split '\|'; return (Update-Tomcat $p[0] $p[1]) }
     'ovh' { return (Update-Ovh $r.Arg) }
@@ -1002,6 +1251,7 @@ function Fix-Row($r) {
 # ---------------- Main ----------------
 Write-Host "Endpoint-Patch  |  $env:COMPUTERNAME  |  $osName ($arch)  |  PowerShell $($PSVersionTable.PSVersion)  |  Admin: $isAdmin  |  winget: $hasWinget"
 Log "Start on $env:COMPUTERNAME $osName admin=$isAdmin"
+Invoke-DeepScan                      # once; the scan after updating re-reads the versions of the same files
 Invoke-Scan
 Show-Table 'CURRENT STATUS'
 Save-Csv 'before'
@@ -1012,7 +1262,8 @@ $waiting = @($script:rows | Where-Object { $_.Status -eq 'NO FIX YET' })
 Write-Host ''
 Write-Host ("Can update automatically: {0}   Need manual action: {1}   Fix not released by vendor yet: {2}" -f $todo.Count, $manual.Count, $waiting.Count)
 if ($waiting.Count) { Write-Host 'NO FIX YET = you already have the newest build this vendor offers. Run the script again in a few days.' -ForegroundColor DarkYellow }
-if (@($script:rows | Where-Object { $_.Status -eq 'IN APP' }).Count) { Write-Host 'IN APP = a runtime bundled inside another application (e.g. MySQL Workbench, LibreOffice). Only updating that application changes it.' -ForegroundColor DarkGray }
+$inApp = @($script:rows | Where-Object { $_.Status -eq 'IN APP' }).Count
+if ($inApp) { Write-Host ("IN APP ({0}) = an outdated copy bundled inside another application (e.g. Burp Suite's browser, MySQL Shell's Python). Replacing files inside an application breaks it, so only updating (or removing) that application fixes it." -f $inApp) -ForegroundColor DarkGray }
 if (@($script:rows | Where-Object { $_.Status -eq 'RESTART' }).Count) { Write-Host 'RESTART = the fixed browser version is already downloaded. Close and reopen that browser to finish.' -ForegroundColor Yellow }
 
 if ($ScanOnly -or $todo.Count -eq 0) { Write-Host "Report: $csvFile"; Log 'End (no updates run)'; return }
