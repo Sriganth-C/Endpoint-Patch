@@ -45,6 +45,8 @@ $MIN_EDGE = '156.0.4314.42'; $MIN_EDGE_EXT = '152.0.4191.137'
 $MIN_FF = '158.0.1'; $MIN_FF_ESR153 = '153.5.1'; $MIN_FF_ESR115 = '115.43.1'
 $MIN_PILLOW = '13.0.0'; $BAD_LITELLM = '1.107.0'; $GOOD_LITELLM = '1.106.2'
 $MIN_OVH = '0.16.0'
+# SHA-256 of ovhcloud.exe inside the official 0.16.0 Windows packages (x86_64, i386, arm64)
+$OVH_EXE_SHA = @('0aaae123c71d0d965941b5846a9ccf0b4148f60ceb2f95ad765870ef9de22189', 'f3cc22492b9cb71d2b63c385f360245cd620fbaf57ae200cc6d6825243fe6151', 'e9f77e802f5a1f0f0e1ee4f68f2050a061270142fe224b1250cc5e61f6957adc')
 $NodeMin = @{ '22' = '22.23.4'; '24' = '24.22.1'; '26' = '26.12.1' }
 $PhpMin = @{ '8.5' = '8.5.12'; '8.4' = '8.4.27'; '8.3' = '8.3.36'; '8.2' = '8.2.35' }
 $PhpVs = @{ '8.5' = 'vs17'; '8.4' = 'vs17'; '8.3' = 'vs16'; '8.2' = 'vs16' }
@@ -76,6 +78,66 @@ $is64 = ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -or $env:PROCESSOR_ARCHITEW6432
 $arch = 'x86'; if ($is64) { $arch = 'x64' }; if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $arch = 'arm64' }
 cmd /c "net session >nul 2>&1"; $isAdmin = ($LASTEXITCODE -eq 0)
 $hasWinget = [bool](Get-Command winget.exe)          # winget lives in WindowsApps, which WhereAll skips
+# When elevated, keep downloads out of the user-writable %TEMP%: a new ProgramData folder created by this
+# run is owned by Administrators, so a normal user cannot swap an installer after its checksum is checked
+if ($isAdmin) {
+  do { $dl = Join-Path $env:ProgramData ("EndpointPatch-{0}-{1}" -f $stamp, (Get-Random -Maximum 999999)) } while (Test-Path $dl)
+  New-Item -ItemType Directory -Path $dl | Out-Null
+}
+
+# True when only SYSTEM / Administrators / TrustedInstaller can change the folder. The elevated script only
+# RUNS programs from such folders; anything a normal user could modify is read from file metadata instead.
+function Test-AdminOnly($dir) {
+  if (-not $dir -or -not (Test-Path $dir)) { return $false }
+  foreach ($ace in (Get-Acl $dir).Access) {
+    if ("$($ace.AccessControlType)" -ne 'Allow') { continue }
+    $who = "$($ace.IdentityReference)"; $name = $who.Split('\')[-1]
+    if (@('SYSTEM', 'Administrators', 'TrustedInstaller', 'CREATOR OWNER') -contains $name -or $who -like 'APPLICATION PACKAGE AUTHORITY*') { continue }
+    if ("$($ace.FileSystemRights)" -match 'FullControl|Modify|Write|CreateFiles|AppendData|268435456|1073741824') { return $false }
+  }
+  return $true
+}
+function Test-SafeToRun($exe) { return (Test-AdminOnly (Split-Path $exe)) }
+# CPU type of a program from its PE header, read as bytes (nothing is executed)
+function Get-PeArch($exe) {
+  $b = Get-Content $exe -Encoding Byte -TotalCount 4096
+  if (-not $b -or $b.Count -lt 64) { return $arch }
+  $pe = [int]$b[60] + 256 * [int]$b[61] + 65536 * [int]$b[62]
+  if ($pe + 6 -gt $b.Count) { return $arch }
+  $m = [int]$b[$pe + 4] + 256 * [int]$b[$pe + 5]
+  if ($m -eq 34404) { return 'x64' }; if ($m -eq 332) { return 'x86' }; if ($m -eq 43620) { return 'arm64' }
+  return $arch
+}
+# Python version and packages read from disk (patchlevel.h, registry, .dist-info folders) - Python is never run
+function Get-PyInfo($exe) {
+  $dir = Split-Path $exe
+  $info = @{ Version = $null; Litellm = $null; Pillow = $null; Certifi = $null; PipCertifi = $null }
+  $pl = Join-Path $dir 'include\patchlevel.h'
+  if (Test-Path $pl) { $m = Select-String -Path $pl -Pattern '#define PY_VERSION\s+"(\d+\.\d+\.\d+)' | Select-Object -First 1; if ($m) { $info.Version = $m.Matches[0].Groups[1].Value } }
+  if (-not $info.Version) {
+    foreach ($k in 'HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore', 'HKCU:\SOFTWARE\Python\PythonCore') {
+      if (-not (Test-Path $k)) { continue }
+      foreach ($tag in (Get-ChildItem $k)) {
+        $ipk = Join-Path $tag.PSPath 'InstallPath'
+        if ((Test-Path $ipk) -and "$((Get-ItemProperty $ipk).'(default)')".TrimEnd('\') -eq $dir) { $rv = Norm "$((Get-ItemProperty $tag.PSPath).Version)"; if ($rv) { $info.Version = $rv } }
+      }
+    }
+  }
+  if (-not $info.Version) { $fv = Norm (FileVer $exe); if ($fv -match '^(\d+\.\d+)\.(\d+)$' -and [int]$Matches[2] -lt 1000) { $info.Version = $fv } }
+  $sp = @(Join-Path $dir 'Lib\site-packages')
+  $short = ''; if ($info.Version -match '^(\d+)\.(\d+)') { $short = "$($Matches[1])$($Matches[2])" }
+  if ($short -and $env:APPDATA) { $sp += Join-Path $env:APPDATA "Python\Python$short\site-packages" }
+  foreach ($s in $sp) {
+    if (-not (Test-Path $s)) { continue }
+    foreach ($d in (Get-ChildItem $s | Where-Object { $_.PSIsContainer -and $_.Name -match '^(?i)(litellm|pillow|certifi)-([0-9][^-]*)\.dist-info$' })) {
+      $null = $d.Name -match '^(?i)(litellm|pillow|certifi)-([0-9][^-]*)\.dist-info$'
+      switch ($Matches[1].ToLower()) { 'litellm' { $info.Litellm = $Matches[2] } 'pillow' { $info.Pillow = $Matches[2] } 'certifi' { $info.Certifi = $Matches[2] } }
+    }
+  }
+  $pc = Join-Path $dir 'Lib\site-packages\pip\_vendor\certifi\__init__.py'
+  if (Test-Path $pc) { $m = Select-String -Path $pc -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1; if ($m) { $info.PipCertifi = $m.Matches[0].Groups[1].Value } }
+  return $info
+}
 
 # Installed programs from the registry (works on every Windows version)
 $apps = @()
@@ -217,6 +279,11 @@ function Stop-Users($dir, $includeWeb) {
 function Start-Users($stopped) {
   foreach ($s in $stopped) {
     if ($s.Kind -eq 'svc') { Log "Start service $($s.Name)"; Start-Service -Name $s.Name }
+    elseif (-not (Test-SafeToRun $s.Path)) {
+      # started by a normal user before; restarting it from this elevated script would run it as admin
+      Log "Not restarting $($s.Path) as admin (user-writable folder)"
+      Write-Host ("    Start again yourself (e.g. XAMPP Control Panel): {0}" -f $s.Path) -ForegroundColor Yellow
+    }
     else {
       Log "Start process $($s.Path) $($s.Args)"
       if ($s.Args) { Start-Process -FilePath $s.Path -ArgumentList $s.Args -WorkingDirectory (Split-Path $s.Path) -WindowStyle Hidden }
@@ -308,7 +375,7 @@ function Invoke-Scan {
   $javas = Find-App '(Java\(TM\)|^Java \d|Java SE Development Kit|Temurin|OpenJDK|Corretto|Zulu)'
   if (-not $javas.Count) {
     $jx = WhereAll 'java.exe'
-    if ($jx.Count) { $out = cmd /c "`"$($jx[0])`" -version 2>&1" | Select-Object -First 1; if ("$out" -match '"([^"]+)"') { $javas = @(, @{ Name = "Java ($($jx[0]))"; Version = $Matches[1]; Location = '' }) } }
+    if ($jx.Count) { $jfv = Norm (FileVer $jx[0]); if ($jfv) { $javas = @(, @{ Name = "Java ($($jx[0]))"; Version = $jfv; Location = '' }) } }
   }
   if (-not $javas.Count) { Add-Row 'Runtime' 'Java (JDK / JRE)' '-' '21.0.13 / 17.0.21 / 11.0.33 / 8u511' '-' '-' }
   foreach ($j in $javas) {
@@ -353,9 +420,9 @@ function Invoke-Scan {
     if (Test-InApp $n) { $inApp += $n; continue }          # Node.js shipped inside another app: not ours to patch
     if (-not $nodePath) { $nodePath = $n }
   }
-  if ($nodePath) { $v = (cmd /c "`"$nodePath`" -v 2>nul") -replace '^v', '' }
+  if ($nodePath) { $v = Norm (FileVer $nodePath) }
   if (-not $v) { $na = Find-App '^Node\.js$'; if ($na.Count) { $v = $na[0].Version } }
-  foreach ($n in $inApp) { Add-Row 'Runtime' "Node.js (inside an app) [$n]" ((cmd /c "`"$n`" -v 2>nul") -replace '^v', '') '-' 'IN APP' 'Bundled inside another application: update that application' }
+  foreach ($n in $inApp) { Add-Row 'Runtime' "Node.js (inside an app) [$n]" (Norm (FileVer $n)) '-' 'IN APP' 'Bundled inside another application: update that application' }
   if (-not $v) { Add-Row 'Runtime' 'Node.js' '-' '22.23.4 / 24.22.1 / 26.12.1' '-' '-' }
   else {
     $major = ((Norm $v) -split '\.')[0]
@@ -363,7 +430,7 @@ function Invoke-Scan {
     $ok = $false; if ($NodeMin.ContainsKey($major)) { $ok = Test-Min $v $req }
     $s = St $ok; $a = '-'
     if ($legacy) { Add-Row 'Runtime' 'Node.js' $v $req 'NO PATCH' 'Node.js 22+ needs Windows 10/11.' }
-    elseif ($nodePath -match '\\nvm') { if (-not $ok) { $a = "nvm install $req" }; Add-Row 'Runtime' 'Node.js (nvm)' $v $req $s $a 'nvm' $req }
+    elseif ($nodePath -match '\\nvm') { if ($ok) { Add-Row 'Runtime' 'Node.js (nvm)' $v $req 'OK' '-' } else { Add-Row 'Runtime' 'Node.js (nvm)' $v $req 'MANUAL' "nvm is user-writable, so it is not run as admin. In a normal PowerShell run:  nvm install $req; nvm use $req" 'manual' } }
     else { if (-not $ok) { $a = "Install Node.js $req" }; Add-Row 'Runtime' 'Node.js' $v $req $s $a 'node' $req }
   }
 
@@ -375,7 +442,7 @@ function Invoke-Scan {
   $phps = $phps | Where-Object { $_ -notmatch '\.bak-\d{8}' } | Sort-Object -Unique      # skip this script's own backups
   if (-not $phps) { Add-Row 'Language' 'PHP' '-' '8.5.12 / 8.4.27 / 8.3.36 / 8.2.35' '-' '-' }
   foreach ($p in $phps) {
-    $v = cmd /c "`"$p`" -r `"echo PHP_VERSION;`" 2>nul"; if (-not (Norm $v)) { $v = FileVer $p }
+    $v = FileVer $p                                         # read from the file, php.exe is not run
     $br = ((Norm $v) -split '\.')[0..1] -join '.'
     if ($PhpMin.ContainsKey($br)) {
       $req = $PhpMin[$br]; $ok = Test-Min $v $req; $s = St $ok; $a = '-'
@@ -421,22 +488,20 @@ function Invoke-Scan {
       Add-Row 'Language' "Python $sb (Microsoft Store)" "$sb (Store)" $req 'CHECK' "Microsoft Store > Library > Get updates (must reach $req)"
       continue
     }
-    $list = cmd /c "`"$py`" -m pip list --format=freeze 2>nul"
-    $lite = $null; $pil = $null; $cert = $null
-    foreach ($l in $list) {
-      if ($l -match '^litellm==(.+)$') { $lite = $Matches[1].Trim() }
-      if ($l -match '^(?i)pillow==(.+)$') { $pil = $Matches[1].Trim() }
-      if ($l -match '^(?i)certifi==(.+)$') { $cert = $Matches[1].Trim() }
-    }
+    # Everything below is read from disk: this elevated script never runs a Python that users can modify
+    $pinfo = Get-PyInfo $py
+    $lite = $pinfo.Litellm; $pil = $pinfo.Pillow; $cert = $pinfo.Certifi
     $bad = ($lite -eq $BAD_LITELLM)
     $owner = Get-PathOwner $py
     $mine = (-not $owner -or $owner -eq $env:USERNAME)
+    $safe = Test-SafeToRun $py              # folder writable only by admins: safe to run pip / the installer elevated
     $lp = $py.ToLower()
+    $userCmd = "In a normal (non-admin) PowerShell"; if (-not $mine) { $userCmd = "Logged on as $owner, in a normal PowerShell" }
 
     # Python itself
-    $pv = Norm (cmd /c "`"$py`" -c `"import sys;print('%d.%d.%d' % sys.version_info[:3])`" 2>nul")
+    $pv = $pinfo.Version
     $pbr = ($pv -split '\.')[0..1] -join '.'
-    if (-not $pv) { Add-Row 'Language' "Python [$py]" 'unknown' '3.14.9 / 3.13.17' 'CHECK' 'Could not start this Python' }
+    if (-not $pv) { Add-Row 'Language' "Python [$py]" 'unknown' '3.14.9 / 3.13.17' 'CHECK' "Version not readable from disk. $userCmd run:  `"$py`" --version" }
     elseif ($bad) { Add-Row 'Language' "Python [$py]" $pv '-' 'COMPROMISED' 'Skipped: this Python is compromised by litellm 1.107.0' }
     elseif (-not $PyMin.ContainsKey($pbr)) {
       if ((Test-Min $pv '3.16') -eq $true) { Add-Row 'Language' "Python [$py]" $pv '-' 'OK' '-' }
@@ -448,22 +513,26 @@ function Invoke-Scan {
     elseif ($lp -match '\\pyenv-win\\') { Add-Row 'Language' "Python (pyenv) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by pyenv: run  pyenv install $($PyMin[$pbr])" 'manual' }
     elseif ($lp -match '\\pythoncore-') { Add-Row 'Language' "Python (install manager) [$py]" $pv $PyMin[$pbr] 'MANUAL' "Managed by the Python install manager: update $pbr with it (see: py help install)" 'manual' }
     elseif ($PyHasInstaller -notcontains $pbr) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'NO PATCH' "python.org has no Windows installer for $($PyMin[$pbr]) (source only). Certifi is updated below; for the CVE fixes move to 3.13/3.14." }
-    elseif (-not $mine) { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'MANUAL' "Per-user install of ${owner}: run this script while logged on as $owner" 'manual' }
+    elseif (-not $safe) {
+      $pyUrl = "$REL/python-$($PyMin[$pbr])-amd64.exe"
+      Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'MANUAL' "Folder is user-writable, so it is not updated as admin. $userCmd run the python.org installer $($PyMin[$pbr]) ($pyUrl) and choose Upgrade" 'manual'
+    }
     else { Add-Row 'Language' "Python [$py]" $pv $PyMin[$pbr] 'UPDATE' "Install Python $($PyMin[$pbr]) over it (python.org installer)" 'pyinst' "$py|$($PyMin[$pbr])|$($pi.Scope)" }
 
     # certifi used by pip / requests (the eMudhra fix for every Python branch)
-    $pc = Norm (cmd /c "`"$py`" -c `"import pip._vendor.certifi as c;print(c.__version__)`" 2>nul")
-    $low = $pc; if ($cert -and (-not $low -or (Test-Min $cert $low) -ne $true)) { $low = $cert }
+    $low = $pinfo.PipCertifi; if ($cert -and (-not $low -or (Test-Min $cert $low) -ne $true)) { $low = $cert }
     if (-not $bad -and $pv -and $low -and (Test-Min $low $MIN_CERTIFI) -ne $true) {
-      if ($mine) { Add-Row 'Certificate' "Python certifi [$py]" $low $MIN_CERTIFI 'UPDATE' 'pip install -U pip certifi (drops the eMudhra CA)' 'certifi' $py }
-      else { Add-Row 'Certificate' "Python certifi [$py]" $low $MIN_CERTIFI 'MANUAL' "Per-user install of ${owner}: run as ${owner}:  python -m pip install -U pip certifi" 'manual' }
+      if ($safe) { Add-Row 'Certificate' "Python certifi [$py]" $low $MIN_CERTIFI 'UPDATE' 'pip install -U pip certifi (drops the eMudhra CA)' 'certifi' $py }
+      else { Add-Row 'Certificate' "Python certifi [$py]" $low $MIN_CERTIFI 'MANUAL' "$userCmd run:  `"$py`" -m pip install -U pip certifi" 'manual' }
     }
     if ($bad) { Add-Row 'Supply chain' "Python: litellm [$py]" $lite "not $BAD_LITELLM ($GOOD_LITELLM)" 'COMPROMISED' 'Security incident: disconnect from network, report to security, rebuild the machine, rotate all secrets. Not auto-fixed: running Python here re-runs the malware.' }
     elseif ($lite) { Add-Row 'Supply chain' "Python: litellm [$py]" $lite "not $BAD_LITELLM" 'OK' '-' }
     else { Add-Row 'Supply chain' "Python: litellm [$py]" '-' "not $BAD_LITELLM" '-' '-' }
     if (-not $pil) { Add-Row 'Library' "Python: Pillow [$py]" '-' $MIN_PILLOW '-' '-' }
     elseif ($bad) { Add-Row 'Library' "Python: Pillow [$py]" $pil $MIN_PILLOW 'COMPROMISED' 'Skipped: this Python is compromised by litellm 1.107.0' }
-    else { $ok = Test-Min $pil $MIN_PILLOW; $s = St $ok; $a = '-'; if ($ok -eq $false) { $a = "pip install pillow>=$MIN_PILLOW" }; Add-Row 'Library' "Python: Pillow [$py]" $pil $MIN_PILLOW $s $a 'pillow' $py }
+    elseif ((Test-Min $pil $MIN_PILLOW) -eq $true) { Add-Row 'Library' "Python: Pillow [$py]" $pil $MIN_PILLOW 'OK' '-' }
+    elseif ($safe) { Add-Row 'Library' "Python: Pillow [$py]" $pil $MIN_PILLOW 'UPDATE' "pip install pillow>=$MIN_PILLOW" 'pillow' $py }
+    else { Add-Row 'Library' "Python: Pillow [$py]" $pil $MIN_PILLOW 'MANUAL' "$userCmd run:  `"$py`" -m pip install -U `"pillow>=$MIN_PILLOW`"" 'manual' }
   }
 
   # GitLab (Linux only)
@@ -472,11 +541,10 @@ function Invoke-Scan {
   # OVHcloud CLI
   $ov = WhereAll 'ovhcloud.exe'
   if ($ov.Count) {
-    $ovv = Norm (cmd /c "`"$($ov[0])`" version 2>nul")
-    $ok = $false; if ($ovv) { $ok = Test-Min $ovv $MIN_OVH }
-    $s = St $ok; $a = '-'; if (-not $ok) { $a = "Replace with verified $MIN_OVH" }
-    $shown = $ovv; if (-not $shown) { $shown = 'unknown' }
-    Add-Row 'Supply chain' "OVHcloud CLI [$($ov[0])]" $shown $MIN_OVH $s $a 'ovh' $ov[0]
+    # Identified by fingerprint against the official 0.16.0 binaries - the binary is not run
+    $isFixed = $OVH_EXE_SHA -contains (Get-Sha256 $ov[0])
+    if ($isFixed) { Add-Row 'Supply chain' "OVHcloud CLI [$($ov[0])]" $MIN_OVH $MIN_OVH 'OK' '-' }
+    else { Add-Row 'Supply chain' "OVHcloud CLI [$($ov[0])]" "not $MIN_OVH" $MIN_OVH 'UPDATE' "Replace with the verified $MIN_OVH binary" 'ovh' $ov[0] }
   } else { Add-Row 'Supply chain' 'OVHcloud CLI' '-' $MIN_OVH '-' '-' }
 
   # eMudhra certificates
@@ -485,8 +553,10 @@ function Invoke-Scan {
   else { Add-Row 'Certificate' 'eMudhra compromised intermediates' 'none' 'none' 'OK' '-' }
 
   # Docker images
-  if (Has 'docker.exe') {
-    $imgs = cmd /c "docker images --format `"{{.Repository}}:{{.Tag}}`" 2>nul"
+  $dk = WhereAll 'docker.exe'
+  if ($dk.Count -and -not (Test-SafeToRun $dk[0])) { Add-Row 'Container' "Docker images [$($dk[0])]" 'not checked' 'pulled after 21 Oct 2026' 'CHECK' 'docker.exe is in a user-writable folder, so it is not run as admin. Check images from a normal prompt.' }
+  elseif ($dk.Count) {
+    $imgs = cmd /c "`"$($dk[0])`" images --format `"{{.Repository}}:{{.Tag}}`" 2>nul"
     if ($LASTEXITCODE -ne 0) { Add-Row 'Container' 'Docker images' 'Docker not running' 'pulled after 21 Oct 2026' 'CHECK' 'Start Docker and run again' }
     else {
       $any = $false
@@ -511,8 +581,9 @@ function Invoke-Scan {
       if ($m) {
         $found = $true; $v = $m.Matches[0].Groups[1].Value; $req = '16.4.1'; if ($v -like '15.*') { $req = '15.5.28' }
         $proj = Split-Path (Split-Path (Split-Path $pj.FullName -Parent) -Parent) -Parent
-        $ok = Test-Min $v $req; $s = St $ok; $a = '-'; if ($ok -eq $false) { $a = "npm install next@$req" }
-        Add-Row 'Library' "Next.js [$proj]" $v $req $s $a 'nextjs' "$proj|$req"
+        # npm runs the project's own install scripts, so it is never run as admin
+        if ((Test-Min $v $req) -eq $true) { Add-Row 'Library' "Next.js [$proj]" $v $req 'OK' '-' }
+        else { Add-Row 'Library' "Next.js [$proj]" $v $req 'MANUAL' "In a normal (non-admin) prompt:  cd `"$proj`"; npm install next@$req" 'manual' }
       }
     }
     if (-not $found) { Add-Row 'Library' 'Next.js' '-' '16.4.1 / 15.5.28' '-' '-' }
@@ -560,12 +631,9 @@ function Msi($file) { $c = Run 'msiexec.exe' "/i `"$file`" /qn /norestart"; retu
 
 function Update-Php($exe, $target) {
   $dir = Split-Path $exe
-  $info = cmd /c "`"$exe`" -i 2>nul"
-  $nts = $false; $parch = $arch
-  foreach ($l in $info) {
-    if ($l -match '^Thread Safety\s*=>\s*disabled') { $nts = $true }
-    if ($l -match '^Architecture\s*=>\s*(x64|x86)') { $parch = $Matches[1] }
-  }
+  # Thread-safe builds ship php8ts.dll, non-thread-safe builds php8.dll; CPU type from the exe header
+  $nts = -not (Test-Path (Join-Path $dir 'php8ts.dll'))
+  $parch = Get-PeArch $exe; if ($parch -ne 'x86') { $parch = 'x64' }
   $br = ($target -split '\.')[0..1] -join '.'
   $name = 'php-' + $target + '-'; if ($nts) { $name += 'nts-' }; $name += "Win32-$($PhpVs[$br])-$parch.zip"
   Log "PHP $exe -> $name"
@@ -578,7 +646,7 @@ function Update-Php($exe, $target) {
   if (-not (Robo $dir $bak) -or -not (Test-Path (Join-Path $bak 'php.exe'))) { return 'FAILED: could not back up the PHP folder. Nothing changed.' }
   $stopped = Stop-Users $dir $true
   $copied = Robo $new $dir
-  $nv = Norm (cmd /c "`"$exe`" -r `"echo PHP_VERSION;`" 2>nul")
+  $nv = Norm (FileVer $exe)
   if (-not $copied -or $nv -ne $target) {
     Log "PHP copy failed or wrong version ($nv); restoring"
     Robo $bak $dir | Out-Null
@@ -620,7 +688,10 @@ function Update-Tomcat($dir, $target) {
     return "FAILED: files locked; old Tomcat restored. Backup: $bak"
   }
   Start-Users $stopped
-  if ($wasRunning -and -not ($stopped | Where-Object { $_.Kind -eq 'svc' })) { Start-Process -FilePath (Join-Path $dir 'bin\startup.bat') -WorkingDirectory (Join-Path $dir 'bin') -WindowStyle Hidden }
+  if ($wasRunning -and -not ($stopped | Where-Object { $_.Kind -eq 'svc' })) {
+    if (Test-AdminOnly (Join-Path $dir 'bin')) { Start-Process -FilePath (Join-Path $dir 'bin\startup.bat') -WorkingDirectory (Join-Path $dir 'bin') -WindowStyle Hidden }
+    else { return "Tomcat $target installed (conf and webapps kept). Start it again with $dir\bin\startup.bat (not run as admin: user-writable folder). Backup: $bak" }
+  }
   return "Tomcat $target installed (conf and webapps kept). Backup: $bak"
 }
 
@@ -700,9 +771,10 @@ function Wait-BrowserVer($dir, $exeName, $dll, $req, $seconds) {
 }
 function Update-Chrome($req) {
   $dir = $null; foreach ($p in "$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application", "$env:LOCALAPPDATA\Google\Chrome\Application") { if (-not $dir -and (Test-Path "$p\chrome.exe")) { $dir = $p } }
-  foreach ($gu in "${env:ProgramFiles(x86)}\Google\Update\GoogleUpdate.exe", "$env:ProgramFiles\Google\Update\GoogleUpdate.exe", "$env:LOCALAPPDATA\Google\Update\GoogleUpdate.exe") {
-    if (Test-Path $gu) { Run $gu '/ua /installsource scheduler' | Out-Null; break }
+  foreach ($gu in "${env:ProgramFiles(x86)}\Google\Update\GoogleUpdate.exe", "$env:ProgramFiles\Google\Update\GoogleUpdate.exe") {
+    if ((Test-Path $gu) -and (Test-SafeToRun $gu)) { Run $gu '/ua /installsource scheduler' | Out-Null; break }
   }
+  if ($dir -like "$env:LOCALAPPDATA*") { return 'MANUAL: this is a per-user Chrome; update it from chrome://settings/help (not run as admin).' }
   if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 120) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') ready. Close and reopen Chrome to finish." }
   Winget 'Google.Chrome' | Out-Null
   if (Wait-BrowserVer $dir 'chrome.exe' 'chrome.dll' $req 30) { return "Chrome $(Get-BrowserVer $dir 'chrome.exe' 'chrome.dll') installed with winget. Reopen Chrome." }
@@ -740,16 +812,20 @@ function Update-Edge($req) {
 
 # Python: official python.org installer for the same branch, run over the existing install (same folder, same scope)
 function Update-Python($exe, $target, $scope) {
-  $bits = cmd /c "`"$exe`" -c `"import sys,platform;print(platform.machine(), sys.maxsize > 2**32)`" 2>nul"
-  $suffix = ''; if ("$bits" -match 'True') { $suffix = '-amd64'; if ("$bits" -match 'ARM64') { $suffix = '-arm64' } }
+  $dir = Split-Path $exe
+  # Only a real Python folder that only admins can change; never a drive root or a whole Program Files
+  if (-not (Test-Path (Join-Path $dir 'Lib\os.py')) -or $dir -match '^[A-Za-z]:\\?$' -or $dir -eq $env:ProgramFiles -or $dir -eq ${env:ProgramFiles(x86)}) { return "FAILED: $dir does not look like a Python install folder. Nothing changed." }
+  if (-not (Test-SafeToRun $exe)) { return "FAILED: $dir is user-writable; update it from a normal (non-admin) prompt. Nothing changed." }
+  $pa = Get-PeArch $exe
+  $suffix = '-amd64'; if ($pa -eq 'x86') { $suffix = '' }; if ($pa -eq 'arm64') { $suffix = '-arm64' }
   $name = "python-$target$suffix.exe"
   $f = Get-Patch $name "https://www.python.org/ftp/python/$target/$name"
   if (-not $f) { return "FAILED: could not download a verified $name" }
   $all = 0; if ($scope -eq 'system') { $all = 1 }
-  $dir = Split-Path $exe
-  Get-Wmi Win32_Process | Where-Object { "$($_.ExecutablePath)" -like "$dir\*" } | ForEach-Object { Log "Stop $($_.Name) $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force }
+  # stop only this Python (python.exe / pythonw.exe from exactly this folder)
+  Get-Wmi Win32_Process | Where-Object { @("$dir\python.exe", "$dir\pythonw.exe") -contains "$($_.ExecutablePath)" } | ForEach-Object { Log "Stop $($_.Name) $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force }
   $code = Run $f "/quiet InstallAllUsers=$all TargetDir=`"$dir`" /log `"$dl\python-$target-install.log`""
-  $nv = Norm (cmd /c "`"$exe`" -c `"import sys;print('%d.%d.%d' % sys.version_info[:3])`" 2>nul")
+  $nv = (Get-PyInfo $exe).Version
   if ($nv -eq $target) { return "Python $target installed in $dir (includes pip with certifi $MIN_CERTIFI)." }
   return "FAILED: installer exit $code, Python is still $nv. Log: $dl\python-$target-install.log"
 }
@@ -761,9 +837,10 @@ function Fix-Row($r) {
     'pyinst' { $p = $r.Arg -split '\|'; return (Update-Python $p[0] $p[1] $p[2]) }
     'certifi' {
       Log "pip upgrade pip certifi on $($r.Arg)"
+      if (-not (Test-SafeToRun $r.Arg)) { return 'FAILED: this Python folder is user-writable; run pip from a normal prompt. Nothing changed.' }
       cmd /c "`"$($r.Arg)`" -m pip install -U pip certifi --disable-pip-version-check >> `"$logFile`" 2>&1"
-      $c = Norm (cmd /c "`"$($r.Arg)`" -c `"import certifi;print(certifi.__version__)`" 2>nul")
-      if ($LASTEXITCODE -eq 0 -and (Test-Min $c $MIN_CERTIFI) -eq $true) { return "pip and certifi $c installed (eMudhra CA removed)." }
+      $pi2 = Get-PyInfo $r.Arg; $c = $pi2.Certifi; if (-not $c) { $c = $pi2.PipCertifi }
+      if ((Test-Min $c $MIN_CERTIFI) -eq $true) { return "pip and certifi $c installed (eMudhra CA removed)." }
       return 'FAILED: pip could not update certifi (no write access or no pip). See log.'
     }
     'firefox' { return (Update-Firefox $r.Arg $r.Req) }
@@ -773,10 +850,6 @@ function Fix-Row($r) {
       if ($f -and (Msi $f)) { return "Installed Node.js $ver. Restart Node services and terminals." }
       if (Winget 'OpenJS.NodeJS.LTS') { return 'Updated Node.js LTS with winget.' }
       return "FAILED: install Node.js $ver from nodejs.org"
-    }
-    'nvm' {
-      cmd /c "nvm install $($r.Arg) >> `"$logFile`" 2>&1 && nvm use $($r.Arg) >> `"$logFile`" 2>&1"
-      if ($LASTEXITCODE -eq 0) { return "Installed Node.js $($r.Arg) with nvm and made it active." } return 'FAILED: nvm could not install it. See log.'
     }
     'java' {
       $parts = $r.Arg -split '\|'; $wid = $parts[0]; $vendor = $parts[1]; $major = $parts[2]; $kind = $parts[3]
@@ -790,6 +863,7 @@ function Fix-Row($r) {
       return 'FAILED: install the fixed Java build from the vendor website. See log.'
     }
     'pillow' {
+      if (-not (Test-SafeToRun $r.Arg)) { return 'FAILED: this Python folder is user-writable; run pip from a normal prompt. Nothing changed.' }
       Log "pip upgrade pillow on $($r.Arg)"
       cmd /c "`"$($r.Arg)`" -m pip install --upgrade `"pillow>=$MIN_PILLOW`" >> `"$logFile`" 2>&1"
       if ($LASTEXITCODE -eq 0) { return "Pillow upgraded to $MIN_PILLOW+." } return 'FAILED: Pillow 13 may need a newer Python. See log.'
@@ -807,11 +881,6 @@ function Fix-Row($r) {
       cmd /c "docker rmi -f $($r.Arg) >> `"$logFile`" 2>&1"
       cmd /c "docker pull ${repo}:v$GOOD_LITELLM >> `"$logFile`" 2>&1"
       return "Removed $($r.Arg) and pulled ${repo}:v$GOOD_LITELLM. Rotate secrets used by containers that ran it."
-    }
-    'nextjs' {
-      $p = $r.Arg -split '\|'
-      cmd /c "cd /d `"$($p[0])`" && npm install next@$($p[1]) >> `"$logFile`" 2>&1"
-      if ($LASTEXITCODE -eq 0) { return "Next.js $($p[1]) installed in $($p[0]). Rebuild and redeploy the app." } return 'FAILED: npm install failed. See log.'
     }
     default { return $r.Action }
   }
