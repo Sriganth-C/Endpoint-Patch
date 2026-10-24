@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>October 2026 Threat Report</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one long report — header, contents, then numbered sections in reading order; every section is a scrollable table */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#14181f; --muted:#5b6472; --line:#dde1e7; --head:#f0f2f6;
+  --accent:#1f4fd1;
+  --p0:#c4231c; --p0-bg:#fdecea; --p1:#b45309; --p1-bg:#fef3e2; --p2:#1f6f8b; --p2-bg:#e6f3f7; --p3:#4b5563; --p3-bg:#eef0f3;
+  --ok:#17803d; --ok-bg:#e7f5ec; --code-bg:#eef1f5;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1217; --surface:#171b22; --fg:#e7eaef; --muted:#9aa3b2; --line:#2a303a; --head:#1c212a; --accent:#7ea2ff;
+  --p0:#ff6b61; --p0-bg:#3a1714; --p1:#f2a54a; --p1-bg:#3a2810; --p2:#5cc1e0; --p2-bg:#0f2d37; --p3:#b3bac6; --p3-bg:#252a33;
+  --ok:#4ad07a; --ok-bg:#12301e; --code-bg:#1d222b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1217; --surface:#171b22; --fg:#e7eaef; --muted:#9aa3b2; --line:#2a303a; --head:#1c212a; --accent:#7ea2ff;
+  --p0:#ff6b61; --p0-bg:#3a1714; --p1:#f2a54a; --p1-bg:#3a2810; --p2:#5cc1e0; --p2-bg:#0f2d37; --p3:#b3bac6; --p3-bg:#252a33;
+  --ok:#4ad07a; --ok-bg:#12301e; --code-bg:#1d222b; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1240px;margin:0 auto;padding-block:32px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(28px,4.5vw,42px);letter-spacing:-.01em}
+h2{font-size:24px}
+h3{font-size:17px}
+p{margin:0}
+a{color:var(--accent)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{display:flex;flex-direction:column;gap:10px}
+.lede{color:var(--muted);max-width:75ch}
+.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;border-top:4px solid var(--c)}
+.tile b{font-family:var(--display);font-size:22px;color:var(--c)}
+.tile span{font-size:13px;color:var(--muted)}
+.t0{--c:var(--p0)}.t1{--c:var(--p1)}.t2{--c:var(--p2)}.t3{--c:var(--p3)}
+nav.toc{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+nav.toc ol{margin:8px 0 0;padding-left:22px;columns:2;column-gap:32px}
+nav.toc li{margin-bottom:4px;break-inside:avoid}
+.tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.tools label{font-size:13px;color:var(--muted)}
+#q{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);min-width:0;flex:1 1 260px;max-width:440px}
+#q:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:12px;scroll-margin-top:16px}
+.sec-head{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.secnum{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.note{font-size:13.5px;color:var(--muted);max-width:90ch}
+.tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+table.wide{min-width:1150px}
+table.mid{min-width:820px}
+th{text-align:left;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line);background:var(--head);white-space:nowrap}
+td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.tier-row td{background:var(--bg-c);color:var(--c);font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.05em;padding:8px 12px}
+.r0{--c:var(--p0);--bg-c:var(--p0-bg)}.r1{--c:var(--p1);--bg-c:var(--p1-bg)}.r2{--c:var(--p2);--bg-c:var(--p2-bg)}.r3{--c:var(--p3);--bg-c:var(--p3-bg)}
+td.rank{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);width:40px}
+td b{display:block}
+td small{color:var(--muted);display:block}
+.cve{font-family:var(--mono);font-size:12px}
+.date{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.date small{font-family:var(--body);white-space:normal}
+.vuln{color:var(--p0)}
+.fix{color:var(--ok);font-family:var(--mono);font-size:12.5px}
+.act{color:var(--muted);font-size:12.5px;margin-top:4px;font-family:var(--body)}
+.pill{display:inline-block;font-size:11.5px;padding:2px 7px;border-radius:4px;margin:0 4px 4px 0;white-space:nowrap;font-weight:500}
+.ex{background:var(--p0-bg);color:var(--p0)}
+.kev{background:var(--p1-bg);color:var(--p1)}
+.no{background:var(--p3-bg);color:var(--p3)}
+.ok{background:var(--ok-bg);color:var(--ok)}
+.pr{font-family:var(--mono);font-size:11.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--bg-c);color:var(--c);white-space:nowrap}
+pre{margin:0;background:var(--code-bg);border-radius:6px;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+code{font-family:var(--mono);font-size:.92em;background:var(--code-bg);padding:1px 5px;border-radius:3px}
+pre code{background:none;padding:0}
+.codes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card.full{grid-column:1/-1}
+.codehead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.copy{font:inherit;font-size:12px;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.copy:hover{border-color:var(--accent);color:var(--accent)}
+#nomatch{color:var(--muted);font-size:14px}
+footer{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:18px}
+@media (max-width:760px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}.codes{grid-template-columns:minmax(0,1fr)}nav.toc ol{columns:1}}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Security briefing · prepared 23 Oct 2026 · covers 14–23 Oct 2026</span>
+    <h1>October 2026 Threat Report</h1>
+    <p class="lede">Everything from this review in one place: the trending vulnerabilities, a check of the Daily Dark Web graphic, browser patch levels, the priority patch list with vulnerable and fixed versions, certificate incidents, and what to check inside the organization. Each entry shows the date it was found, disclosed or first exploited.</p>
+  </header>
+
+  <div class="strip" aria-label="Summary">
+    <div class="tile t0"><b>P0 · 6</b><span>Act today. Exploited or no-login RCE.</span></div>
+    <div class="tile t1"><b>P1 · 13</b><span>Within 72 hours. Runtimes, browsers, KEV.</span></div>
+    <div class="tile t2"><b>P2 · 3</b><span>This sprint. Libraries and frameworks.</span></div>
+    <div class="tile t3"><b>P3 · 5</b><span>Housekeeping. Secrets, phishing, claims.</span></div>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <span class="eyebrow">Contents</span>
+    <ol>
+      <li><a href="#trending">Trending vulnerability: PHP2Shell</a></li>
+      <li><a href="#priority">Master priority list (all vulnerabilities)</a></li>
+      <li><a href="#browsers">Browsers: vulnerable vs. patched</a></li>
+      <li><a href="#factcheck">Fact-check of the Daily Dark Web graphic</a></li>
+      <li><a href="#breaches">Breaches and incidents</a></li>
+      <li><a href="#certs">Certificate incidents</a></li>
+      <li><a href="#certchecks">Certificate checks</a></li>
+      <li><a href="#org">Organization checklist</a></li>
+      <li><a href="#scripts">Inventory scripts</a></li>
+      <li><a href="#timeline">Timeline by date</a></li>
+      <li><a href="#corrections">Corrections and open questions</a></li>
+      <li><a href="#sources">Sources</a></li>
+    </ol>
+  </nav>
+
+  <div class="tools">
+    <label for="q">Filter all tables</label>
+    <input id="q" type="search" placeholder="Product, CVE, version or date, e.g. php, 2026-1102, 21 Oct">
+  </div>
+  <p id="nomatch" hidden>No rows match that filter.</p>
+
+  <!-- 1 -->
+  <section id="trending">
+    <div class="sec-head"><span class="secnum">01</span><h2>Trending vulnerability: PHP2Shell</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>Field</th><th>Details</th></tr></thead>
+      <tbody>
+        <tr><td><b>CVEs</b></td><td class="cve">CVE-2026-109618 (memory corruption in multipart parsing when PHP runs out of memory)<br>CVE-2026-109619 (use-after-free on the next request after a fatal error)</td></tr>
+        <tr><td><b>Severity</b></td><td>CVSS 9.2 Critical. Unauthenticated remote code execution.</td></tr>
+        <tr><td><b>Language</b></td><td>PHP, which runs about 70% of websites (WordPress, Laravel, Drupal, Magento).</td></tr>
+        <tr><td><b>Found / disclosed</b></td><td class="date">20 Oct 2026 <small>Details leaked ahead of coordinated disclosure. Found by Calif, Wiz and OpenAI researchers.</small><br>21 Oct 2026 <small>Official PHP advisory and fixed releases.</small></td></tr>
+        <tr><td><b>First exploitation</b></td><td class="date">21 Oct 2026 <small>watchTowr honeypots; Cloudflare reports early attacks. 22 Oct: VulnCheck confirmed a PoC that bypasses ASLR on PHP 8.4.26 (x86-64).</small></td></tr>
+        <tr><td><b>Affected setups</b></td><td>mod_php (highest risk), PHP-FPM, php-cgi, FrankenPHP, LiteSpeed</td></tr>
+        <tr><td><b>Vulnerable</b></td><td class="vuln">Every release before the fixed versions. PHP 7.4, 8.0 and 8.1 get source patches only, with no official release.</td></tr>
+        <tr><td><b>Patched</b></td><td class="fix">8.5.12 · 8.4.27 · 8.3.36 · 8.2.35</td></tr>
+        <tr><td><b>Distro status</b></td><td>Fixed: Ubuntu, Debian, php.net Windows builds, official Docker images, cPanel EA4 25.91. Pending: RHEL 8/9/10, SUSE, Alpine, Homebrew, Amazon Linux 2023. No fix planned for Amazon Linux PHP 8.1.</td></tr>
+        <tr><td><b>CISA KEV</b></td><td>Not listed yet</td></tr>
+        <tr><td><b>Workaround</b></td><td>WAF rules (Cloudflare, VulnCheck). <code>session.upload_progress.enabled=0</code> blocks one path for -109619 only. Set it in php.ini, not <code>ini_set()</code>. Restart workers after any change.</td></tr>
+        <tr><td><b>Warning</b></td><td>Many fake PoC repositories on GitHub contain malware. Don't run them.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 2 -->
+  <section id="priority">
+    <div class="sec-head"><span class="secnum">02</span><h2>Master priority list</h2></div>
+    <p class="note">Ranked by active exploitation, internet exposure and whether an attacker needs a login. "Found / disclosed" is the earliest public date found: the vendor advisory, the researcher's report or first exploitation, whichever is known. "KEV" is the date CISA added it to the Known Exploited Vulnerabilities catalog.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Product / language</th><th>Type</th><th>CVE</th><th>Found / disclosed</th><th>Exploited?</th><th>Vulnerable versions</th><th>Patched (stable) versions</th></tr></thead>
+      <tbody>
+        <tr class="tier-row r0"><td colspan="8">P0 · ACT TODAY</td></tr>
+        <tr><td class="rank">01</td><td><b>PHP (PHP2Shell)</b><small>Language runtime</small></td><td>Language</td>
+          <td class="cve">CVE-2026-109618<br>CVE-2026-109619</td>
+          <td class="date">20 Oct 2026<small>Leaked; fixed 21 Oct</small></td>
+          <td><span class="pill ex">Exploitation reported</span><span class="pill no">CVSS 9.2</span></td>
+          <td class="vuln">All before fixed versions; 7.4/8.0/8.1 source patch only</td>
+          <td class="fix">8.5.12 · 8.4.27 · 8.3.36 · 8.2.35<div class="act">Restart PHP-FPM / web server.</div></td></tr>
+        <tr><td class="rank">02</td><td><b>BeyondTrust Remote Support</b><small>Remote access appliance</small></td><td>Server</td>
+          <td class="cve">CVE-2026-102764</td>
+          <td class="date">Aug 2026<small>Exploited from August (about 47 days before disclosure). SaaS patched 8–9 Oct.</small></td>
+          <td><span class="pill ex">Exploited · China-linked APT</span><span class="pill kev">KEV 16 Oct</span><span class="pill no">CVSS 9.3</span></td>
+          <td class="vuln">24.3.1 – 26.2.3 without the patch</td>
+          <td class="fix">Patch BT26-05-RS<div class="act">Older than 24.3.1: upgrade first. Hunt for the Sawfly webshell and Bareclaw tunneler.</div></td></tr>
+        <tr><td class="rank">03</td><td><b>Arista VeloCloud Orchestrator</b><small>SD-WAN management</small></td><td>Server</td>
+          <td class="cve">CVE-2026-114625</td>
+          <td class="date">22 Oct 2026<small>Arista advisory; found by Arista</small></td>
+          <td><span class="pill ex">Exploited (zero-day)</span><span class="pill no">CVSS 9.9</span></td>
+          <td class="vuln">On-prem builds below the fixes, including builds that fixed the July and September bugs</td>
+          <td class="fix">5.2.3.18 · 6.1.3.10 · 6.4.2.12<div class="act">Hosted already patched. Block Arista's listed IPs.</div></td></tr>
+        <tr><td class="rank">04</td><td><b>GitLab CE/EE (self-managed)</b><small>DevOps server, Onigmo regex engine</small></td><td>Server</td>
+          <td class="cve">CVE-2026-110264</td>
+          <td class="date">21 Oct 2026<small>Patch release</small></td>
+          <td><span class="pill no">CVSS 10.0</span><span class="pill ok">No attacks reported</span></td>
+          <td class="vuln">7.0 – 18.11.12 · 19.0 &lt; 19.0.10 · 19.1 &lt; 19.1.9 · 19.2 &lt; 19.2.9 · 19.3 &lt; 19.3.6 · 19.4 &lt; 19.4.3 · 19.5.0</td>
+          <td class="fix">19.5.1 · 19.4.3 · 19.3.6 · 19.2.9 · 19.1.9 · 19.0.10 · 18.11.13<div class="act">The 12 Oct release does not fix this. No workaround.</div></td></tr>
+        <tr><td class="rank">05</td><td><b>LiteLLM</b><small>Python (PyPI) + Docker</small></td><td>Supply chain</td>
+          <td class="cve">Malicious release</td>
+          <td class="date">21 Oct 2026<small>Live about 2 hours</small></td>
+          <td><span class="pill ex">Active compromise</span></td>
+          <td class="vuln">litellm 1.107.0 · Docker v1.107.0, latest, main-latest, main-stable</td>
+          <td class="fix">Pin 1.106.2<div class="act">If installed: don't run pip there. Rebuild clean, rotate cloud, SSH and AI keys.</div></td></tr>
+        <tr><td class="rank">06</td><td><b>Plex Media Server (Plex2Shell)</b><small>Media server</small></td><td>Server</td>
+          <td class="cve">CVE-2026-96652 · -96654<br>-96655 · -96656</td>
+          <td class="date">3–4 Aug 2026<small>Fix shipped; exploitation update 19 Oct</small></td>
+          <td><span class="pill ex">Exploited (miners, proxies)</span><span class="pill kev">KEV 20 Oct</span></td>
+          <td class="vuln">Builds before 1.43.3.10861 (including 1.43.3.10828)</td>
+          <td class="fix">1.43.3.10861 or later</td></tr>
+
+        <tr class="tier-row r1"><td colspan="8">P1 · WITHIN 72 HOURS</td></tr>
+        <tr><td class="rank">07</td><td><b>Node.js</b><small>JavaScript runtime</small></td><td>Language</td>
+          <td class="cve">CVE-2026-111497 (Brotli RCE) + 9 more</td>
+          <td class="date">21 Oct 2026</td>
+          <td><span class="pill no">High / CVSS 9.2</span><span class="pill ok">No attacks reported</span></td>
+          <td class="vuln">22.x &lt; 22.23.4 · 24.x &lt; 24.22.1 · 26.x &lt; 26.12.1 · all end-of-life lines</td>
+          <td class="fix">22.23.4 · 24.22.1 · 26.12.1<div class="act">Rebuild container images.</div></td></tr>
+        <tr><td class="rank">08</td><td><b>Java (Oracle JDK)</b><small>October Critical Patch Update, 55 Java fixes</small></td><td>Language</td>
+          <td class="cve">Oct 2026 CPU</td>
+          <td class="date">20 Oct 2026</td>
+          <td><span class="pill ok">No attacks reported</span></td>
+          <td class="vuln">Older than the fixed builds</td>
+          <td class="fix">27.0.1 · 25.0.5 · 21.0.13 · 17.0.21 · 11.0.33 · 8u511</td></tr>
+        <tr><td class="rank">09</td><td><b>Java / GraalVM emergency fix</b><small>JSSE trusts eMudhra intermediates</small></td><td>Language</td>
+          <td class="cve">CVE-2026-91403</td>
+          <td class="date">22 Oct 2026<small>About two days after the CPU</small></td>
+          <td><span class="pill no">CVSS 9.1</span></td>
+          <td class="vuln">Builds without the .0.2 suffix</td>
+          <td class="fix">.0.2 builds, e.g. 27.0.1.0.2 · 21.0.13.0.2</td></tr>
+        <tr><td class="rank">10</td><td><b>Apache Tomcat</b><small>Java application server</small></td><td>Server</td>
+          <td class="cve">CVE-2026-101296</td>
+          <td class="date">20 Oct 2026</td>
+          <td><span class="pill no">Important</span><span class="pill ok">No PoC</span></td>
+          <td class="vuln">11.0.0-M1–11.0.26 · 10.1.0-M1–10.1.60 · 9.0.0.M1–9.0.122 · 8.5.x · 7.0.x</td>
+          <td class="fix">11.0.27 · 10.1.61 · 9.0.123</td></tr>
+        <tr><td class="rank">11</td><td><b>Google Chrome</b></td><td>Browser</td>
+          <td class="cve">CVE-2026-113271 · -113303 · -113341 · -113279 · -113072 · -113280</td>
+          <td class="date">20 Oct 2026<small>Reported 8 Oct (113271) and 15 Oct (113303)</small></td>
+          <td><span class="pill ok">Not reported exploited</span></td>
+          <td class="vuln">&lt; 156.0.8078.47</td>
+          <td class="fix">156.0.8078.47/.48</td></tr>
+        <tr><td class="rank">12</td><td><b>Microsoft Edge</b></td><td>Browser</td>
+          <td class="cve">Chromium 156 fixes</td>
+          <td class="date">22 Oct 2026</td>
+          <td><span class="pill ok">Not reported exploited</span></td>
+          <td class="vuln">&lt; 156.0.4314.42</td>
+          <td class="fix">156.0.4314.42</td></tr>
+        <tr><td class="rank">13</td><td><b>Mozilla Firefox</b></td><td>Browser</td>
+          <td class="cve">CVE-2026-113399 · -113470 · -113400 · -113401</td>
+          <td class="date">20 Oct 2026</td>
+          <td><span class="pill no">High</span></td>
+          <td class="vuln">&lt; 158.0.1</td>
+          <td class="fix">158.0.1 · ESR 153.5.1 · ESR 115.43.1</td></tr>
+        <tr><td class="rank">14</td><td><b>Fortinet</b><small>Network / security appliance</small></td><td>Server</td>
+          <td class="cve">CVE-2025-61624</td>
+          <td class="date">2025<small>CVE year; KEV 16 Oct 2026</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 16 Oct</span></td>
+          <td class="vuln">See Fortinet PSIRT</td>
+          <td class="fix">See Fortinet PSIRT</td></tr>
+        <tr><td class="rank">15</td><td><b>Atlassian (multiple products)</b></td><td>Server</td>
+          <td class="cve">CVE-2026-21589</td>
+          <td class="date">15 Oct 2026<small>KEV date</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 15 Oct</span></td>
+          <td class="vuln">See Atlassian advisory</td>
+          <td class="fix">See Atlassian advisory</td></tr>
+        <tr><td class="rank">16</td><td><b>Palo Alto PAN-OS</b></td><td>Server</td>
+          <td class="cve">CVE-2026-0322</td>
+          <td class="date">14 Oct 2026<small>KEV date</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 14 Oct</span></td>
+          <td class="vuln">See Palo Alto advisory</td>
+          <td class="fix">See Palo Alto advisory</td></tr>
+        <tr><td class="rank">17</td><td><b>Cisco Secure Email Gateway</b></td><td>Server</td>
+          <td class="cve">CVE-2026-76519</td>
+          <td class="date">14 Oct 2026<small>KEV date</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 14 Oct</span></td>
+          <td class="vuln">See Cisco advisory</td>
+          <td class="fix">See Cisco advisory</td></tr>
+        <tr><td class="rank">18</td><td><b>Ahsay AhsayCBS</b><small>Backup server</small></td><td>Server</td>
+          <td class="cve">CVE-2026-105133<br>CVE-2026-105134</td>
+          <td class="date">14 Oct 2026<small>KEV date</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 14 Oct</span></td>
+          <td class="vuln">See Ahsay advisory</td>
+          <td class="fix">See Ahsay advisory</td></tr>
+        <tr><td class="rank">19</td><td><b>Palo Alto GlobalProtect (carry-over)</b><small>VPN</small></td><td>Server</td>
+          <td class="cve">CVE-2026-0257</td>
+          <td class="date">May 2026<small>KEV 29 May 2026</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 29 May</span></td>
+          <td class="vuln">PAN-OS 10.2 / 11.1 / 11.2 / 12.1 below the fixed hotfixes</td>
+          <td class="fix">12.1.4-h6 / 12.1.7 · 11.2.12 · 11.1.15 · 10.2.18-h6 (others in advisory)</td></tr>
+
+        <tr class="tier-row r2"><td colspan="8">P2 · THIS SPRINT</td></tr>
+        <tr><td class="rank">20</td><td><b>Pillow</b><small>Python image library</small></td><td>Library</td>
+          <td class="cve">CVE-2026-112393 + related TIFF CVEs</td>
+          <td class="date">21 Oct 2026</td>
+          <td><span class="pill no">Important</span></td>
+          <td class="vuln">2.0.0 up to (not including) 13.0.0</td>
+          <td class="fix">13.0.0</td></tr>
+        <tr><td class="rank">21</td><td><b>Next.js</b><small>JavaScript framework</small></td><td>Library</td>
+          <td class="cve">2 critical RCEs</td>
+          <td class="date">14 Oct 2026</td>
+          <td><span class="pill no">Critical</span></td>
+          <td class="vuln">Below the fixed versions</td>
+          <td class="fix">16.4.1 · 15.5.28</td></tr>
+        <tr><td class="rank">22</td><td><b>SiteGuard · Siemens Software Center</b></td><td>Server / app</td>
+          <td class="cve">See CISA KEV</td>
+          <td class="date">20 Oct 2026<small>KEV date</small></td>
+          <td><span class="pill ex">Exploited</span><span class="pill kev">KEV 20 Oct</span></td>
+          <td class="vuln">See vendor advisory</td>
+          <td class="fix">See vendor advisory<div class="act">Move to P0 if you run either.</div></td></tr>
+
+        <tr class="tier-row r3"><td colspan="8">P3 · HOUSEKEEPING (details in section 05)</td></tr>
+        <tr><td class="rank">23</td><td><b>Railway</b><small>Cloud platform</small></td><td>Breach</td><td class="cve">—</td>
+          <td class="date">21 Oct 2026</td><td><span class="pill ex">Confirmed</span></td>
+          <td>Any team deploying on Railway</td><td class="fix">Rotate env vars and registry credentials</td></tr>
+        <tr><td class="rank">24</td><td><b>Capcom ID</b></td><td>Breach</td><td class="cve">—</td>
+          <td class="date">19 Oct 2026<small>Disclosed 22 Oct</small></td><td><span class="pill no">Confirmed</span></td>
+          <td>Staff with Capcom accounts</td><td class="fix">Phishing warning</td></tr>
+        <tr><td class="rank">25</td><td><b>Comic Cmoa</b></td><td>Breach</td><td class="cve">—</td>
+          <td class="date">15 Oct 2026<small>4.2M figure 21 Oct</small></td><td><span class="pill no">Confirmed</span></td>
+          <td>Staff with Cmoa accounts</td><td class="fix">Phishing warning</td></tr>
+        <tr><td class="rank">26</td><td><b>Quest Diagnostics</b></td><td>Breach</td><td class="cve">—</td>
+          <td class="date">21 Oct 2026</td><td><span class="pill no">Confirmed (8-K)</span></td>
+          <td>Quest clients and patients</td><td class="fix">Watch for notices; phishing warning</td></tr>
+        <tr><td class="rank">27</td><td><b>PwC / Everest</b></td><td>Ransomware claim</td><td class="cve">—</td>
+          <td class="date">22 Oct 2026</td><td><span class="pill no">Unverified</span></td>
+          <td>PwC clients and vendors</td><td class="fix">Watch; be alert to PwC-themed lures</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 3 -->
+  <section id="browsers">
+    <div class="sec-head"><span class="secnum">03</span><h2>Browsers: vulnerable vs. patched</h2></div>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>Browser</th><th>Release</th><th>Date</th><th>Version</th><th>Security fixes</th><th>Key CVEs</th><th>Exploited?</th></tr></thead>
+      <tbody>
+        <tr><td><b>Chrome</b><small>Current</small></td><td>Stable 156</td><td class="date">20 Oct 2026</td><td class="fix">156.0.8078.47/.48 (Win/Mac)<br>156.0.8078.47 (Linux)</td><td>353 (6 Critical, 61 High)</td>
+          <td class="cve">CVE-2026-113341 Skia · -113279 Accessibility · -113072 CSS · -113280 Paint · -113271 Accessibility UAF · -113303 WebRTC</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>Chrome</b><small>Previous</small></td><td>Stable 155</td><td class="date">6 Oct 2026</td><td class="vuln">155.x (now vulnerable)</td><td>247 (4 Critical)</td><td class="cve">—</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>ChromeOS</b></td><td>Stable</td><td class="date">20 Oct 2026</td><td class="fix">16836.19.0</td><td>Guest-to-host and GPU kernel fixes</td><td class="cve">—</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>Edge</b><small>Current</small></td><td>Stable 156</td><td class="date">22 Oct 2026</td><td class="fix">156.0.4314.42</td><td>Chromium 156 (CVE list pending)</td><td class="cve">—</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>Edge</b><small>Previous</small></td><td>Stable 155</td><td class="date">15–16 Oct 2026</td><td class="vuln">155.0.4283.60 / .62</td><td>—</td><td class="cve">—</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>Edge</b></td><td>Extended Stable</td><td class="date">16 Oct 2026</td><td class="fix">152.0.4191.137</td><td>—</td><td class="cve">—</td><td>—</td></tr>
+        <tr><td><b>Edge</b><small>Last exploited fix</small></td><td>Stable 152</td><td class="date">4 Sep 2026</td><td>152.0.4191.66</td><td>—</td><td class="cve">CVE-2026-87491</td><td><span class="pill ex">Yes</span></td></tr>
+        <tr><td><b>Firefox</b><small>Current</small></td><td>MFSA 2026-111</td><td class="date">20 Oct 2026</td><td class="fix">158.0.1</td><td>4 (2 High)</td><td class="cve">CVE-2026-113399 SVG · -113470 eMudhra block · -113400 · -113401</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>Firefox ESR</b></td><td>MFSA 2026-112 / -113</td><td class="date">20 Oct 2026</td><td class="fix">153.5.1 · 115.43.1</td><td>—</td><td class="cve">—</td><td><span class="pill ok">No</span></td></tr>
+        <tr><td><b>Firefox</b><small>Previous</small></td><td>MFSA 2026-106</td><td class="date">13 Oct 2026</td><td class="vuln">158.0 (now vulnerable)</td><td>Large release (High impact)</td><td class="cve">—</td><td><span class="pill ok">No</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 4 -->
+  <section id="factcheck">
+    <div class="sec-head"><span class="secnum">04</span><h2>Fact-check of the Daily Dark Web graphic (Oct 22–23)</h2></div>
+    <p class="note">7 of 10 stories check out. Two have a detail that is wrong or unconfirmed, and one is only partly confirmed.</p>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Story in the graphic</th><th>Date</th><th>Verdict</th><th>What the sources say</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">01</td><td><b>Arista VeloCloud VCO</b><small>CVE-2026-114625 SQLi 9.9, exploited</small></td><td class="date">22 Oct 2026</td><td><span class="pill ok">True</span></td><td>Read-only tenant login can gain operator. Fixed in 5.2.3.18 / 6.1.3.10 / 6.4.2.12.</td></tr>
+        <tr><td class="rank">02</td><td><b>GitLab CVSS 10.0 RCE</b><small>CVE-2026-110264</small></td><td class="date">21 Oct 2026</td><td><span class="pill ok">True</span></td><td>Integer overflow in the Onigmo regex engine. No login needed. Fixed releases out.</td></tr>
+        <tr><td class="rank">03</td><td><b>PHP2Shell</b><small>ASLR-bypass PoC; attempts 4 days before disclosure</small></td><td class="date">20–22 Oct 2026</td><td><span class="pill kev">Mostly true</span></td><td>The ASLR-bypass PoC is real (VulnCheck, 22 Oct). The "4 days before disclosure" claim is not supported: details leaked 20 Oct and the first honeypot hits were 21 Oct.</td></tr>
+        <tr><td class="rank">04</td><td><b>Capcom ID: 11.7M records</b></td><td class="date">19 Oct (found)<br>22 Oct (disclosed)</td><td><span class="pill ok">True</span></td><td>11,774,247 records of emails and login metadata. 196 passwords changed without permission. No card data.</td></tr>
+        <tr><td class="rank">05</td><td><b>Quest Diagnostics</b></td><td class="date">21 Oct 2026</td><td><span class="pill ok">True</span></td><td>SEC 8-K: unauthorized access to the Quanum LSM portal; patient records believed accessed.</td></tr>
+        <tr><td class="rank">06</td><td><b>LiteLLM release hijack</b><small>AI-gateway logs as token source</small></td><td class="date">21 Oct 2026</td><td><span class="pill kev">Partly true</span></td><td>Malicious 1.107.0 is real. Attackers used stolen GitHub CLI OAuth tokens from 3 engineers. No source supports the "AI-gateway logs" claim.</td></tr>
+        <tr><td class="rank">07</td><td><b>Railway env vars</b></td><td class="date">21 Oct 2026</td><td><span class="pill ok">True</span></td><td>Some variables decrypted. Builds paused. All users told to rotate secrets.</td></tr>
+        <tr><td class="rank">08</td><td><b>eMudhra exits SSL/TLS</b></td><td class="date">17 Oct 2026</td><td><span class="pill kev">Partly confirmed</span></td><td>8 intermediate keys compromised and blocked; G3 issuance stopped. No official statement found that eMudhra is leaving TLS entirely.</td></tr>
+        <tr><td class="rank">09</td><td><b>PwC: Everest countdown</b></td><td class="date">22 Oct 2026</td><td><span class="pill ok">True as a claim</span></td><td>Leak-site listing of 590.69 GB / 108,426 files. Unverified; PwC hasn't confirmed.</td></tr>
+        <tr><td class="rank">10</td><td><b>Comic Cmoa: 4.2M logs</b></td><td class="date">15 Oct (found)<br>21 Oct (4.2M)</td><td><span class="pill ok">True</span></td><td>Up to about 4.2M records from system logs, no passwords. Separately 319 database records with hashed passwords.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 5 -->
+  <section id="breaches">
+    <div class="sec-head"><span class="secnum">05</span><h2>Breaches and incidents</h2></div>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>Organization</th><th>Found</th><th>Disclosed</th><th>Records / scope</th><th>Data exposed</th><th>Status</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr><td><b>Railway</b></td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td>Subset of users</td><td>Environment variables (API keys, DB and registry credentials), some decrypted</td><td><span class="pill ex">Confirmed</span></td><td>Rotate all variables and registry credentials; review logs</td></tr>
+        <tr><td><b>LiteLLM</b></td><td class="date">21 Oct 2026</td><td class="date">21 Oct 2026</td><td>Anyone who installed 1.107.0 in about 2 hours</td><td>Cloud, SSH, AI and browser credentials</td><td><span class="pill ex">Confirmed</span></td><td>Rebuild clean, rotate secrets, pin 1.106.2</td></tr>
+        <tr><td><b>Capcom ID</b></td><td class="date">19 Oct 2026</td><td class="date">22 Oct 2026</td><td>11,774,247 records</td><td>Emails, login times, last-login IP; 43 records with DOB, gender, nickname</td><td><span class="pill no">Confirmed</span></td><td>Phishing warning; check password reuse</td></tr>
+        <tr><td><b>Quest Diagnostics</b></td><td class="date">21 Oct 2026</td><td class="date">Oct 2026 (8-K)</td><td>Under investigation</td><td>Patient records (believed)</td><td><span class="pill no">Confirmed</span></td><td>Watch for notification letters</td></tr>
+        <tr><td><b>Comic Cmoa (NTT Solmare)</b></td><td class="date">15 Oct 2026</td><td class="date">21 Oct 2026</td><td>Up to about 4.2M log records + 319 DB records</td><td>Email, DOB, gender; 319 with hashed passwords</td><td><span class="pill no">Confirmed</span></td><td>Phishing warning</td></tr>
+        <tr><td><b>PwC</b></td><td class="date">—</td><td class="date">22 Oct 2026 (claim)</td><td>590.69 GB, 108,426 files (claimed)</td><td>HR, training, audit documents, SSO code (claimed)</td><td><span class="pill no">Unverified</span></td><td>Watch for confirmation</td></tr>
+        <tr><td><b>OVHcloud CLI</b></td><td class="date">19 Oct 2026</td><td class="date">Oct 2026</td><td>94-minute window</td><td>Release binaries 0.11.0–0.15.0 replaced</td><td><span class="pill ex">Confirmed</span></td><td>Upgrade to 0.16.0</td></tr>
+        <tr><td><b>UpdraftPlus (WordPress)</b></td><td class="date">Oct 2026</td><td class="date">Oct 2026</td><td>Sites connected to UpdraftCentral</td><td>Stolen connection keys used to install malicious plugins</td><td><span class="pill ex">Confirmed</span></td><td>Update to 1.26.13 Free / 2.26.13 Premium</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 6 -->
+  <section id="certs">
+    <div class="sec-head"><span class="secnum">06</span><h2>Certificate incidents</h2></div>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>Incident</th><th>Date</th><th>What happened</th><th>Affected certificates</th><th>Response</th><th>Exploited?</th></tr></thead>
+      <tbody>
+        <tr><td><b>eMudhra CA key compromise</b></td><td class="date">17 Oct 2026<small>Weak keys date from Apr 2025</small></td>
+          <td>Researchers recovered the private keys of 8 intermediate CAs. The keys were small enough to recover almost instantly.</td>
+          <td class="cve">TLS: EM DV / OV / EV TLS CA (G3B, G3C) under emSign Root TLS CA - G3<br>Code signing: EM OV CS CA - G3B, G3C under emSign Root CS CA - G3</td>
+          <td>Chrome + Firefox blocked 17 Oct · Apple 19 Oct · Microsoft 20 Oct · Firefox CVE-2026-113470 · Java CVE-2026-91403 · eMudhra stopped G3 issuance</td>
+          <td><span class="pill ok">None known</span></td></tr>
+        <tr><td><b>eMudhra customer reissue</b></td><td class="date">Oct 2026</td>
+          <td>Customer certificates under the removed root must move to another eMudhra root.</td>
+          <td>About 30,000 customer certificates</td>
+          <td>Reissue under a different root</td>
+          <td>—</td></tr>
+        <tr><td><b>DigiCert code-signing theft</b></td><td class="date">Apr 2026</td>
+          <td>Attackers reached support systems through a malicious chat file and generated code-signing certificates.</td>
+          <td>60 certificates revoked</td>
+          <td>Revocation</td>
+          <td><span class="pill ex">Yes, Zhong Stealer</span></td></tr>
+        <tr><td><b>GoDaddy mass revocation</b></td><td class="date">—</td>
+          <td>Claim of 404,607 revoked certificates.</td>
+          <td>—</td>
+          <td>Could not be confirmed</td>
+          <td>—</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 7 -->
+  <section id="certchecks">
+    <div class="sec-head"><span class="secnum">07</span><h2>Certificate checks for the organization</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>#</th><th>Check</th><th>Why</th><th>How</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td><b>Windows certificate stores</b></td><td>Servers with paused updates may not have Microsoft's 20 Oct block.</td><td>PowerShell script in section 09; <code>certmgr.msc</code></td></tr>
+        <tr><td class="rank">2</td><td><b>Apps with their own CA bundle</b></td><td>Java, Python <code>certifi</code>, Node.js, curl, Docker images and appliances skip OS revocation.</td><td>Java .0.2 builds; update <code>certifi</code> and CA bundles; rebuild images</td></tr>
+        <tr><td class="rank">3</td><td><b>Your own certificates</b></td><td>eMudhra G3 certificates are being replaced.</td><td>Inventory issuers; reissue any eMudhra G3 certificates</td></tr>
+        <tr><td class="rank">4</td><td><b>Signed executables</b></td><td>The two code-signing CAs could sign malware.</td><td>Flag files signed through EM OV CS CA - G3B/G3C (script in section 09)</td></tr>
+        <tr><td class="rank">5</td><td><b>Revocation checking</b></td><td>Proxies, EDR and TLS inspection must not fail open.</td><td>Confirm CRL/OCSP checks are on and hard-fail</td></tr>
+        <tr><td class="rank">6</td><td><b>Certificate Transparency</b></td><td>Spot certificates issued for your domains you didn't request.</td><td>Monitor crt.sh or a CT alert service</td></tr>
+        <tr><td class="rank">7</td><td><b>Inventory and expiry</b></td><td>Know what you own and who issued it.</td><td>Keep a list: domain, issuer, expiry, owner</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 8 -->
+  <section id="org">
+    <div class="sec-head"><span class="secnum">08</span><h2>Organization checklist</h2></div>
+    <div class="tablebox"><table class="wide" data-filter>
+      <thead><tr><th>#</th><th>Area</th><th>Action</th><th>Related to</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td><b>PHP inventory</b></td><td>Find every PHP install (servers, containers, Windows copies, laptops) and record exact versions.</td><td>PHP2Shell</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">2</td><td><b>PHP patching</b></td><td>Patch internet-facing and mod_php servers first, then restart PHP-FPM and the web server.</td><td>PHP2Shell</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">3</td><td><b>PHP stopgap</b></td><td>WAF rules; <code>session.upload_progress.enabled=0</code> (covers -109619 only).</td><td>PHP2Shell</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">4</td><td><b>Log hunting</b></td><td>Look for PHP-FPM / Apache worker crashes and malformed multipart/form-data requests.</td><td>PHP2Shell</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">5</td><td><b>Exploited appliances</b></td><td>Patch BeyondTrust, VeloCloud, Plex; hunt for webshells and tunnels after patching.</td><td>KEV items</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">6</td><td><b>GitLab</b></td><td>Upgrade self-managed GitLab to a fixed release.</td><td>CVE-2026-110264</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">7</td><td><b>Supply chain</b></td><td>Search lockfiles, CI caches and images for <code>litellm==1.107.0</code>. If found: isolate, rebuild, rotate keys.</td><td>LiteLLM</td><td><span class="pr r0">P0</span></td></tr>
+        <tr><td class="rank">8</td><td><b>Runtimes and servers</b></td><td>Update Node.js, Java, Tomcat; rebuild container images.</td><td>P1 items</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">9</td><td><b>Browsers</b></td><td>Force updates via Group Policy / Intune; set <code>RelaunchNotification</code> so users restart.</td><td>Chrome, Edge, Firefox</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">10</td><td><b>KEV review</b></td><td>Match CISA KEV entries against your asset list: Fortinet, PAN-OS, Cisco ESA, Atlassian, Ahsay.</td><td>KEV items</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">11</td><td><b>Libraries</b></td><td>Update Pillow and Next.js; run dependency scans.</td><td>P2 items</td><td><span class="pr r2">P2</span></td></tr>
+        <tr><td class="rank">12</td><td><b>Certificates</b></td><td>Run the checks in section 07.</td><td>eMudhra</td><td><span class="pr r1">P1</span></td></tr>
+        <tr><td class="rank">13</td><td><b>Secrets</b></td><td>Rotate secrets on Railway and any machine that ran litellm 1.107.0.</td><td>Railway, LiteLLM</td><td><span class="pr r3">P3</span></td></tr>
+        <tr><td class="rank">14</td><td><b>Awareness</b></td><td>Warn staff about phishing themed on Capcom, Comic Cmoa, Quest and PwC.</td><td>Breaches</td><td><span class="pr r3">P3</span></td></tr>
+        <tr><td class="rank">15</td><td><b>PoC hygiene</b></td><td>Don't run PHP2Shell PoCs from GitHub; many contain malware.</td><td>PHP2Shell</td><td><span class="pr r3">P3</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 9 -->
+  <section id="scripts">
+    <div class="sec-head"><span class="secnum">09</span><h2>Inventory scripts</h2></div>
+    <div class="codes">
+      <div class="card full">
+        <div class="codehead"><h3>Windows: browser and PHP versions</h3><button class="copy" type="button" data-copy="c1">Copy</button></div>
+<pre id="c1"><code>$checks = @(
+  @{Name='Chrome';  Path="$env:ProgramFiles\Google\Chrome\Application\chrome.exe";         Min='156.0.8078.47'},
+  @{Name='Edge';    Path="${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"; Min='156.0.4314.42'},
+  @{Name='Firefox'; Path="$env:ProgramFiles\Mozilla Firefox\firefox.exe";                 Min='158.0.1'}
+)
+foreach ($c in $checks) {
+  if (Test-Path $c.Path) {
+    $v = (Get-Item $c.Path).VersionInfo.ProductVersion
+    $status = if ([version]$v -ge [version]$c.Min) {'PATCHED'} else {'VULNERABLE'}
+    "{0,-8} {1,-16} {2}" -f $c.Name, $v, $status
+  } else { "{0,-8} not installed" -f $c.Name }
+}
+# PHP: find php.exe on C: and report the version from file metadata (no execution)
+Get-ChildItem C:\ -Recurse -Filter php.exe -ErrorAction SilentlyContinue |
+  ForEach-Object { "{0}  {1}" -f $_.FullName, $_.VersionInfo.ProductVersion }</code></pre>
+      </div>
+      <div class="card full">
+        <div class="codehead"><h3>Windows: eMudhra certificates and signed files</h3><button class="copy" type="button" data-copy="c2">Copy</button></div>
+<pre id="c2"><code># Certificate stores (machine + user)
+Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\CA, Cert:\CurrentUser\Root, Cert:\CurrentUser\CA |
+  Where-Object { $_.Subject -match 'emSign|eMudhra|EM (DV|OV|EV) TLS CA|EM OV CS CA' -or $_.Issuer -match 'emSign|eMudhra' } |
+  Select-Object PSParentPath, Subject, Issuer, Thumbprint, NotAfter | Format-List
+
+# Executables signed through the compromised code-signing CAs
+Get-ChildItem 'C:\Program Files','C:\Program Files (x86)' -Recurse -Include *.exe,*.dll,*.msi -ErrorAction SilentlyContinue |
+  Get-AuthenticodeSignature -ErrorAction SilentlyContinue |
+  Where-Object { $_.SignerCertificate.Issuer -match 'EM OV CS CA' } |
+  Select-Object Path, Status, @{n='Issuer';e={$_.SignerCertificate.Issuer}}</code></pre>
+      </div>
+      <div class="card">
+        <div class="codehead"><h3>Linux: PHP, Node and certificate chain</h3><button class="copy" type="button" data-copy="c3">Copy</button></div>
+<pre id="c3"><code>php -v; node -v; java -version
+# Compare against your distro's security tracker
+# (distros backport fixes without changing the version)
+
+openssl s_client -connect example.com:443 -servername example.com -showcerts &lt;/dev/null 2&gt;/dev/null | grep -E 's:|i:'
+grep -il emsign /etc/ssl/certs/* 2&gt;/dev/null</code></pre>
+      </div>
+      <div class="card">
+        <div class="codehead"><h3>Supply chain and Java trust store</h3><button class="copy" type="button" data-copy="c4">Copy</button></div>
+<pre id="c4"><code># Find the malicious LiteLLM release in lockfiles
+grep -rn "litellm.*1\.107\.0" --include=*.txt --include=*.lock --include=*.toml .
+pip show litellm 2&gt;/dev/null | grep Version
+
+# emSign entries in the JDK trust store
+keytool -list -v -cacerts -storepass changeit | grep -i -A2 emsign</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section id="timeline">
+    <div class="sec-head"><span class="secnum">10</span><h2>Timeline by date</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>Date</th><th>Event</th><th>Type</th></tr></thead>
+      <tbody>
+        <tr><td class="date">Apr 2026</td><td>DigiCert code-signing certificates stolen and used for Zhong Stealer</td><td>Certificate</td></tr>
+        <tr><td class="date">29 May 2026</td><td>Palo Alto GlobalProtect CVE-2026-0257 added to KEV</td><td>Exploited</td></tr>
+        <tr><td class="date">3–4 Aug 2026</td><td>Plex 1.43.3.10861 fix ships (Plex2Shell)</td><td>Patch</td></tr>
+        <tr><td class="date">Aug 2026</td><td>BeyondTrust CVE-2026-102764 exploitation begins</td><td>Exploited</td></tr>
+        <tr><td class="date">4 Sep 2026</td><td>Edge 152.0.4191.66 fixes exploited CVE-2026-87491</td><td>Patch</td></tr>
+        <tr><td class="date">6 Oct 2026</td><td>Chrome 155 (247 fixes); Firefox 157.0.1</td><td>Patch</td></tr>
+        <tr><td class="date">8 Oct 2026</td><td>Chrome CVE-2026-113271 reported; BeyondTrust SaaS patched (8–9 Oct)</td><td>Found / patch</td></tr>
+        <tr><td class="date">13 Oct 2026</td><td>Firefox 158, ESR 115.43, ESR 153.5</td><td>Patch</td></tr>
+        <tr><td class="date">14 Oct 2026</td><td>KEV: PAN-OS CVE-2026-0322, Cisco ESA CVE-2026-76519, Ahsay CVE-2026-105133/105134 · Next.js RCE fixes</td><td>Exploited / patch</td></tr>
+        <tr><td class="date">15 Oct 2026</td><td>KEV: Atlassian CVE-2026-21589 · Comic Cmoa suspends service · Chrome CVE-2026-113303 reported · Edge 155.0.4283.60</td><td>Mixed</td></tr>
+        <tr><td class="date">16 Oct 2026</td><td>KEV: Fortinet CVE-2025-61624, BeyondTrust CVE-2026-102764 · Edge 155.0.4283.62</td><td>Exploited / patch</td></tr>
+        <tr><td class="date">17 Oct 2026</td><td>Chrome and Firefox block compromised eMudhra intermediates</td><td>Certificate</td></tr>
+        <tr><td class="date">19 Oct 2026</td><td>Capcom detects intrusion · Apple blocks eMudhra · OVHcloud CLI binaries replaced · Plex exploitation update</td><td>Mixed</td></tr>
+        <tr><td class="date">20 Oct 2026</td><td>PHP2Shell details leak · Chrome 156 · Firefox 158.0.1 · Oracle CPU · Tomcat CVE-2026-101296 · Microsoft blocks eMudhra · KEV: Plex x4, SiteGuard, Siemens</td><td>Mixed</td></tr>
+        <tr><td class="date">21 Oct 2026</td><td>PHP 8.x fixes + first exploitation · GitLab CVE-2026-110264 · Node.js release · LiteLLM 1.107.0 hijack · Railway breach · Quest access found · Pillow 13.0.0 · Comic Cmoa 4.2M figure</td><td>Mixed</td></tr>
+        <tr><td class="date">22 Oct 2026</td><td>Arista VeloCloud CVE-2026-114625 · Edge 156 · Java emergency fix CVE-2026-91403 · Capcom disclosure · PwC/Everest claim · PHP2Shell ASLR-bypass PoC confirmed</td><td>Mixed</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 11 -->
+  <section id="corrections">
+    <div class="sec-head"><span class="secnum">11</span><h2>Corrections and open questions</h2></div>
+    <div class="tablebox"><table class="mid" data-filter>
+      <thead><tr><th>Item</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td><b>Pillow CVE</b></td><td>Earlier given as CVE-2026-112902. The correct ID is CVE-2026-112393, fixed in 13.0.0.</td></tr>
+        <tr><td><b>Edge 155 build</b></td><td>Sources disagree between 155.0.4283.60 and .62. Edge 156 CVE list not yet published.</td></tr>
+        <tr><td><b>Chrome Extended Stable</b></td><td>Version not found in any source checked.</td></tr>
+        <tr><td><b>PHP2Shell exploitation scale</b></td><td>Reports range from "mostly probing" (Patchstack) to active attacks (watchTowr, Cloudflare). Not in KEV yet.</td></tr>
+        <tr><td><b>KEV items without versions</b></td><td>Fortinet, Atlassian, PAN-OS CVE-2026-0322, Cisco ESA, Ahsay, SiteGuard, Siemens: check the vendor advisory.</td></tr>
+        <tr><td><b>"Found" dates</b></td><td>Most vendors publish a disclosure date, not the date the bug was first found. Where an earlier date is known (BeyondTrust, Chrome reports, eMudhra keys), it is shown.</td></tr>
+        <tr><td><b>Source quality</b></td><td>Some details come from news coverage. Confirm versions against the vendor advisory before signing off a patch.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 12 -->
+  <footer id="sources">
+    <h2 style="color:var(--fg)">Sources</h2>
+    <p><b>CISA:</b>
+      <a href="https://www.cisa.gov/news-events/alerts/2026/10/14/cisa-adds-four-known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">KEV 14 Oct</a> ·
+      <a href="https://www.cisa.gov/news-events/alerts/2026/10/15/cisa-adds-one-known-exploited-vulnerability-catalog" target="_blank" rel="noopener">15 Oct</a> ·
+      <a href="https://www.cisa.gov/news-events/alerts/2026/10/16/cisa-adds-two-known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">16 Oct</a> ·
+      <a href="https://www.cisa.gov/news-events/alerts/2026/10/20/cisa-adds-six-known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">20 Oct</a> ·
+      <a href="https://www.cisa.gov/news-events/alerts/2026/10/16/cisa-urges-patching-critical-vulnerability-beyondtrust-remote-support" target="_blank" rel="noopener">BeyondTrust alert</a></p>
+    <p><b>PHP2Shell:</b>
+      <a href="https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619" target="_blank" rel="noopener">Tanium</a> ·
+      <a href="https://www.vulncheck.com/blog/php2shell-vulnerabilities" target="_blank" rel="noopener">VulnCheck</a> ·
+      <a href="https://www.theregister.com/security/2026/10/22/php2shell-exploit-bypasses-protections-designed-to-stop-remote-code-execution/5304883" target="_blank" rel="noopener">The Register</a> ·
+      <a href="https://cert.europa.eu/publications/security-advisories/2026-018/" target="_blank" rel="noopener">CERT-EU</a> ·
+      <a href="https://bleepingcomputer.com/news/security/php-ships-emergency-patches-for-critical-php2shell-flaws" target="_blank" rel="noopener">BleepingComputer</a></p>
+    <p><b>Vendors:</b>
+      <a href="https://nodejs.org/en/blog/vulnerability/october-2026-security-releases" target="_blank" rel="noopener">Node.js</a> ·
+      <a href="https://www.oracle.com/security-alerts/cpuoct2026.html" target="_blank" rel="noopener">Oracle CPU</a> ·
+      <a href="https://docs.oracle.com/en-us/iaas/releasenotes/java-management/jdk-cpu-october-2026.htm" target="_blank" rel="noopener">Java versions</a> ·
+      <a href="https://cybersecuritynews.com/emergency-java-update/" target="_blank" rel="noopener">Java emergency update</a> ·
+      <a href="https://www.openwall.com/lists/oss-security/2026/10/20/26" target="_blank" rel="noopener">Tomcat</a> ·
+      <a href="https://security.paloaltonetworks.com/CVE-2026-0257" target="_blank" rel="noopener">Palo Alto</a> ·
+      <a href="https://security-tracker.debian.org/tracker/CVE-2026-112393" target="_blank" rel="noopener">Pillow</a> ·
+      <a href="https://chromereleases.googleblog.com/2026/10/stable-channel-update-for-desktop_02018666648.html" target="_blank" rel="noopener">Chrome</a> ·
+      <a href="https://gbhackers.com/google-chrome-156-fixes-353-security-vulnerabilities/" target="_blank" rel="noopener">Chrome 156 (GBHackers)</a> ·
+      <a href="https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnotes-security" target="_blank" rel="noopener">Edge security</a> ·
+      <a href="https://www.mozilla.org/en-US/security/advisories/mfsa2026-111/" target="_blank" rel="noopener">Firefox MFSA 2026-111</a></p>
+    <p><b>Exploited products:</b>
+      <a href="https://thehackernews.com/2026/10/critical-gitlab-flaw-cvss-100-could.html" target="_blank" rel="noopener">GitLab</a> ·
+      <a href="https://www.rapid7.com/blog/post/etr-cve-2026-102764-critical-beyondtrust-remote-support-authentication-bypass-exploited-in-the-wild/" target="_blank" rel="noopener">BeyondTrust</a> ·
+      <a href="https://www.scworld.com/brief/arista-networks-patches-actively-exploited-zero-day-vulnerability-in-velocloud-orchestrator" target="_blank" rel="noopener">Arista</a> ·
+      <a href="https://cybersecuritynews.com/plex-vulnerabilities-exploited-in-wild/" target="_blank" rel="noopener">Plex</a> ·
+      <a href="https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker.md" target="_blank" rel="noopener">LiteLLM (Datadog)</a> ·
+      <a href="https://cybersecuritynews.com/october-21-cybersecurity-nightmare/" target="_blank" rel="noopener">21 Oct roundup</a></p>
+    <p><b>Breaches:</b>
+      <a href="https://www.eventhubs.com/news/2026/oct/22/capcom-apology-data-breach-accounts/" target="_blank" rel="noopener">Capcom</a> ·
+      <a href="https://www.sec.gov/Archives/edgar/data/0001022079/000094787126000941/ss6979200_8k.htm" target="_blank" rel="noopener">Quest 8-K</a> ·
+      <a href="https://blog.railway.com/p/security-disclosure-wednesday-october-21st" target="_blank" rel="noopener">Railway</a> ·
+      <a href="https://cybersecuritynews.com/pwc-data-breach-claim/" target="_blank" rel="noopener">PwC claim</a> ·
+      <a href="https://cypro.co.uk/insights/cyber-bulletins/everest-pwc-claim-remains-unverified/" target="_blank" rel="noopener">PwC unverified</a> ·
+      <a href="https://www.itmedia.co.jp/news/article/2610/22/2000002500/" target="_blank" rel="noopener">Comic Cmoa (ITmedia)</a></p>
+    <p><b>Certificates:</b>
+      <a href="https://thehackernews.com/2026/10/eight-emudhra-ca-keys-compromised.html" target="_blank" rel="noopener">The Hacker News</a> ·
+      <a href="https://www.bleepingcomputer.com/news/security/mozilla-google-apple-block-compromised-emudhra-ca-certificates/" target="_blank" rel="noopener">BleepingComputer</a> ·
+      <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=2083449" target="_blank" rel="noopener">Mozilla bug 2083449</a> ·
+      <a href="https://emudhra.com/en/post/certificate-security-incident" target="_blank" rel="noopener">eMudhra statement</a> ·
+      <a href="https://unit42.paloaltonetworks.com/emudhra-certificate-compromise/" target="_blank" rel="noopener">Unit 42</a> ·
+      <a href="https://hackread.com/hackers-digicert-issue-certificates-sign-malware/" target="_blank" rel="noopener">DigiCert</a></p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var q=document.getElementById('q');
+  var none=document.getElementById('nomatch');
+  var tables=[].slice.call(document.querySelectorAll('table[data-filter]'));
+  q.addEventListener('input',function(){
+    var t=q.value.trim().toLowerCase(), total=0;
+    tables.forEach(function(tb){
+      var shown=0;
+      tb.querySelectorAll('tbody tr').forEach(function(r){
+        if(r.classList.contains('tier-row')){r.hidden=!!t;return;}
+        var m=!t||r.textContent.toLowerCase().indexOf(t)>-1;
+        r.hidden=!m; if(m)shown++;
+      });
+      tb.closest('section').hidden=shown===0; total+=shown;
+    });
+    none.hidden=total!==0;
+  });
+  document.querySelectorAll('.copy').forEach(function(b){
+    b.addEventListener('click',function(){
+      var el=document.getElementById(b.getAttribute('data-copy'));
+      function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},1500);}
+      function sel(){var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);}
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(el.textContent).then(done,sel);}else sel();
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

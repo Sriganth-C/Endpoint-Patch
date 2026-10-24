@@ -6,7 +6,7 @@ Scans Windows and Linux endpoints for the software affected by the October 2026 
 |---|---|
 | [`windows`](../../tree/windows) | `Endpoint-Patch.ps1` for Windows 7 / 8.1 / 10 / 11 / Server |
 | [`linux`](../../tree/linux) | `Endpoint-Patch.sh` for Ubuntu, Debian, RHEL, Rocky, Alma, CentOS, Fedora, Amazon Linux, SUSE, Alpine |
-| `main` | This README and the patch checklist page |
+| `main` | This README and the report pages: `Endpoint-Patch-Checklist.html` (what to update, per version), `October-2026-Threat-Report.html` (full briefing), `Patch-Priority-Board.html` (P0–P3 priorities). Download and open them in a browser. |
 
 Patch packages that the scripts install directly (PHP, Tomcat, OVHcloud CLI, Temurin Java for Linux) are in the release **[patches-2026-10](../../releases/tag/patches-2026-10)**, with `SHA256SUMS.txt`. Every file was verified against the publisher's own checksum before upload, and the scripts verify it again before installing.
 

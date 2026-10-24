@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Patch Priority Board</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: triage board — summary strip, then priority tiers as stacked sections, each a scrollable table; cert section last */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#14181f; --muted:#5b6472; --line:#dde1e7;
+  --accent:#1f4fd1;
+  --p0:#c4231c; --p0-bg:#fdecea; --p1:#b45309; --p1-bg:#fef3e2; --p2:#1f6f8b; --p2-bg:#e6f3f7; --p3:#4b5563; --p3-bg:#eef0f3;
+  --ok:#17803d; --code-bg:#eef1f5;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1217; --surface:#171b22; --fg:#e7eaef; --muted:#9aa3b2; --line:#2a303a; --accent:#7ea2ff;
+  --p0:#ff6b61; --p0-bg:#3a1714; --p1:#f2a54a; --p1-bg:#3a2810; --p2:#5cc1e0; --p2-bg:#0f2d37; --p3:#b3bac6; --p3-bg:#252a33;
+  --ok:#4ad07a; --code-bg:#1d222b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1217; --surface:#171b22; --fg:#e7eaef; --muted:#9aa3b2; --line:#2a303a; --accent:#7ea2ff;
+  --p0:#ff6b61; --p0-bg:#3a1714; --p1:#f2a54a; --p1-bg:#3a2810; --p2:#5cc1e0; --p2-bg:#0f2d37; --p3:#b3bac6; --p3-bg:#252a33;
+  --ok:#4ad07a; --code-bg:#1d222b; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding-block:32px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:36px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(28px,4.5vw,40px);letter-spacing:-.01em}
+h2{font-size:24px}
+h3{font-size:17px}
+p{margin:0}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{display:flex;flex-direction:column;gap:10px}
+header .lede{color:var(--muted);max-width:70ch}
+.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;border-top:4px solid var(--c)}
+.tile b{font-family:var(--display);font-size:22px;color:var(--c)}
+.tile span{font-size:13px;color:var(--muted)}
+.t0{--c:var(--p0)}.t1{--c:var(--p1)}.t2{--c:var(--p2)}.t3{--c:var(--p3)}
+.tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.tools label{font-size:13px;color:var(--muted)}
+#q{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);min-width:0;flex:1 1 260px;max-width:420px}
+#q:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section.tier{display:flex;flex-direction:column;gap:12px}
+.tier-head{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.badge{font-family:var(--mono);font-size:12px;font-weight:500;padding:3px 8px;border-radius:4px;background:var(--bg-c);color:var(--c);letter-spacing:.04em;white-space:nowrap}
+.b0{--c:var(--p0);--bg-c:var(--p0-bg)}.b1{--c:var(--p1);--bg-c:var(--p1-bg)}.b2{--c:var(--p2);--bg-c:var(--p2-bg)}.b3{--c:var(--p3);--bg-c:var(--p3-bg)}
+.tier-head p{color:var(--muted);font-size:14px}
+.tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:900px;font-size:14px}
+th{text-align:left;font-family:var(--mono);font-size:11.5px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line);background:var(--surface);position:sticky;top:0}
+td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.rank{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);width:44px}
+td.prod b{display:block}
+td.prod small{color:var(--muted)}
+.cve{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.vuln{color:var(--p0)}
+.fix{color:var(--ok);font-family:var(--mono);font-size:13px}
+.st{display:inline-block;font-size:12px;padding:2px 7px;border-radius:4px;margin:0 4px 4px 0;white-space:nowrap}
+.st.ex{background:var(--p0-bg);color:var(--p0);font-weight:600}
+.st.kev{background:var(--p1-bg);color:var(--p1)}
+.st.no{background:var(--p3-bg);color:var(--p3)}
+td .act{color:var(--muted);font-size:13px;margin-top:4px}
+.empty{padding:14px;color:var(--muted);font-size:14px}
+.cert{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card ul,.card ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.card.wide{grid-column:1/-1}
+pre{margin:0;background:var(--code-bg);border-radius:6px;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+code{font-family:var(--mono);font-size:.92em;background:var(--code-bg);padding:1px 5px;border-radius:3px}
+pre code{background:none;padding:0}
+.codehead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.copy{font:inherit;font-size:12px;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.copy:hover{border-color:var(--accent);color:var(--accent)}
+.note{font-size:13px;color:var(--muted)}
+.list-plain{display:flex;flex-direction:column;gap:6px;margin:0;padding-left:20px}
+footer{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:18px}
+footer a{color:var(--accent)}
+@media (max-width:760px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}.cert{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Vulnerability triage · week of 16–23 Oct 2026</span>
+    <h1>Patch Priority Board</h1>
+    <p class="lede">Every vulnerability from this week's review, ranked by what to fix first. Rank considers active exploitation, whether the system faces the internet, and whether an attacker needs a login. Versions were checked against vendor advisories where they were available. Confirm against the vendor before you sign off a patch.</p>
+  </header>
+
+  <div class="strip" aria-label="Summary">
+    <div class="tile t0"><b>P0 · 6</b><span>Act today. Exploited or no-login RCE.</span></div>
+    <div class="tile t1"><b>P1 · 9</b><span>Within 72 hours. Runtimes, browsers, KEV.</span></div>
+    <div class="tile t2"><b>P2 · 3</b><span>This sprint. Libraries and frameworks.</span></div>
+    <div class="tile t3"><b>P3 · 3</b><span>Hygiene. Secrets, phishing, watch list.</span></div>
+  </div>
+
+  <div class="tools">
+    <label for="q">Filter</label>
+    <input id="q" type="search" placeholder="Product, CVE or version, e.g. php, 2026-1102, tomcat">
+  </div>
+
+  <!-- P0 -->
+  <section class="tier" data-tier>
+    <div class="tier-head"><span class="badge b0">P0 · ACT TODAY</span><h2>Exploited, or unauthenticated RCE</h2></div>
+    <p class="note">Patch internet-facing systems first. For anything exploited, assume a breach and hunt for signs of compromise after patching.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>#</th><th>Product / language</th><th>CVE</th><th>Status</th><th>Vulnerable</th><th>Patched (stable)</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">01</td><td class="prod"><b>PHP (PHP2Shell)</b><small>Language runtime. mod_php, PHP-FPM, php-cgi, FrankenPHP, LiteSpeed</small></td>
+          <td class="cve">CVE-2026-109618<br>CVE-2026-109619</td>
+          <td><span class="st ex">Exploitation reported</span><span class="st no">CVSS 9.2</span><div class="act">Public PoC bypasses ASLR on 8.4.26 (x86-64). Not in KEV yet.</div></td>
+          <td class="vuln">All releases before the fixed versions. 7.4 / 8.0 / 8.1: source patch only</td>
+          <td class="fix">8.5.12 · 8.4.27 · 8.3.36 · 8.2.35<div class="act">Restart PHP-FPM and the web server. If patching waits: WAF rules, <code>session.upload_progress.enabled=0</code> (covers -109619 only).</div></td></tr>
+        <tr><td class="rank">02</td><td class="prod"><b>BeyondTrust Remote Support</b><small>Remote access appliance</small></td>
+          <td class="cve">CVE-2026-102764</td>
+          <td><span class="st ex">Exploited · China-linked APT</span><span class="st kev">KEV 16 Oct</span><span class="st no">CVSS 9.3</span></td>
+          <td class="vuln">24.3.1 – 26.2.3 without the patch</td>
+          <td class="fix">Patch BT26-05-RS<div class="act">Older than 24.3.1: upgrade first. Hunt for the Sawfly webshell and Bareclaw tunneler, because patching doesn't remove them.</div></td></tr>
+        <tr><td class="rank">03</td><td class="prod"><b>Arista VeloCloud Orchestrator</b><small>SD-WAN management (on-prem)</small></td>
+          <td class="cve">CVE-2026-114625</td>
+          <td><span class="st ex">Exploited (zero-day)</span><span class="st no">CVSS 9.9</span><div class="act">SQL injection lets a read-only account become operator.</div></td>
+          <td class="vuln">On-prem builds below the fixes, including builds that fixed the July and September bugs</td>
+          <td class="fix">5.2.3.18 · 6.1.3.10 · 6.4.2.12<div class="act">Hosted versions already patched. Restrict management access and block Arista's listed IPs.</div></td></tr>
+        <tr><td class="rank">04</td><td class="prod"><b>GitLab CE/EE (self-managed)</b><small>DevOps server. Onigmo regex engine</small></td>
+          <td class="cve">CVE-2026-110264</td>
+          <td><span class="st no">CVSS 10.0</span><span class="st no">No exploitation reported</span><div class="act">No login needed. No workaround.</div></td>
+          <td class="vuln">7.0 up to 18.11.12 · 19.0 &lt; 19.0.10 · 19.1 &lt; 19.1.9 · 19.2 &lt; 19.2.9 · 19.3 &lt; 19.3.6 · 19.4 &lt; 19.4.3 · 19.5.0</td>
+          <td class="fix">19.5.1 · 19.4.3 · 19.3.6 · 19.2.9 · 19.1.9 · 19.0.10 · 18.11.13<div class="act">Older than 18.11: move to a supported line. The 12 Oct release does not fix this.</div></td></tr>
+        <tr><td class="rank">05</td><td class="prod"><b>LiteLLM (Python, PyPI + Docker)</b><small>Supply-chain compromise</small></td>
+          <td class="cve">Malicious release</td>
+          <td><span class="st ex">Active compromise</span><div class="act">Infostealer and RAT. Runs at Python startup even if LiteLLM is never imported.</div></td>
+          <td class="vuln">litellm 1.107.0 · Docker tags v1.107.0, latest, main-latest, main-stable</td>
+          <td class="fix">Pin 1.106.2<div class="act">If installed: don't run pip on that host. Rebuild clean, then rotate cloud, SSH and AI keys.</div></td></tr>
+        <tr><td class="rank">06</td><td class="prod"><b>Plex Media Server (Plex2Shell)</b><small>Media server, often on staff home networks</small></td>
+          <td class="cve">CVE-2026-96652<br>-96654 · -96655 · -96656</td>
+          <td><span class="st ex">Exploited (miners, proxies)</span><span class="st kev">KEV 20 Oct</span></td>
+          <td class="vuln">Builds before 1.43.3.10861 (including 1.43.3.10828)</td>
+          <td class="fix">1.43.3.10861 or later<div class="act">Treat internet-exposed old builds as compromised.</div></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- P1 -->
+  <section class="tier" data-tier>
+    <div class="tier-head"><span class="badge b1">P1 · WITHIN 72 HOURS</span><h2>Runtimes, servers, browsers, other KEV entries</h2></div>
+    <div class="tablebox"><table>
+      <thead><tr><th>#</th><th>Product / language</th><th>CVE</th><th>Status</th><th>Vulnerable</th><th>Patched (stable)</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">07</td><td class="prod"><b>Node.js (JavaScript)</b><small>Runtime. Rebuild container images too.</small></td>
+          <td class="cve">CVE-2026-111497<br>+ 9 more</td>
+          <td><span class="st no">High / CVSS 9.2</span><div class="act">Brotli out-of-bounds write (RCE). TLS hostname and DNS bypasses.</div></td>
+          <td class="vuln">22.x &lt; 22.23.4 · 24.x &lt; 24.22.1 · 26.x &lt; 26.12.1 · all end-of-life lines</td>
+          <td class="fix">22.23.4 · 24.22.1 · 26.12.1</td></tr>
+        <tr><td class="rank">08</td><td class="prod"><b>Java (Oracle JDK / GraalVM)</b><small>October CPU + emergency certificate fix</small></td>
+          <td class="cve">CPU Oct 2026 (55 fixes)<br>CVE-2026-91403</td>
+          <td><span class="st no">CVSS 9.1 (91403)</span><div class="act">91403: JSSE trusts eMudhra intermediates.</div></td>
+          <td class="vuln">Anything older than the fixed builds</td>
+          <td class="fix">27.0.1 · 25.0.5 · 21.0.13 · 17.0.21 · 11.0.33 · 8u511<div class="act">For 91403 use the .0.2 builds, e.g. 21.0.13.0.2.</div></td></tr>
+        <tr><td class="rank">09</td><td class="prod"><b>Apache Tomcat</b><small>Java application server</small></td>
+          <td class="cve">CVE-2026-101296</td>
+          <td><span class="st no">Important</span><div class="act">JNDIRealm with non-GSSAPI SASL accepts a wrong password.</div></td>
+          <td class="vuln">11.0.0-M1–11.0.26 · 10.1.0-M1–10.1.60 · 9.0.0.M1–9.0.122 · 8.5.x · 7.0.x</td>
+          <td class="fix">11.0.27 · 10.1.61 · 9.0.123</td></tr>
+        <tr><td class="rank">10</td><td class="prod"><b>Google Chrome</b><small>Browser</small></td>
+          <td class="cve">CVE-2026-113271 · -113303<br>+ 4 more Critical</td>
+          <td><span class="st no">Not reported exploited</span><div class="act">353 fixes, 6 Critical memory-corruption bugs.</div></td>
+          <td class="vuln">&lt; 156.0.8078.47</td>
+          <td class="fix">156.0.8078.47/.48 (Win/Mac) · 156.0.8078.47 (Linux)</td></tr>
+        <tr><td class="rank">11</td><td class="prod"><b>Microsoft Edge</b><small>Browser</small></td>
+          <td class="cve">Chromium 156 fixes</td>
+          <td><span class="st no">Not reported exploited</span><div class="act">Microsoft hasn't published the CVE list yet.</div></td>
+          <td class="vuln">&lt; 156.0.4314.42</td>
+          <td class="fix">156.0.4314.42 · Extended Stable 152.0.4191.137</td></tr>
+        <tr><td class="rank">12</td><td class="prod"><b>Mozilla Firefox</b><small>Browser</small></td>
+          <td class="cve">CVE-2026-113399<br>CVE-2026-113470</td>
+          <td><span class="st no">High</span><div class="act">113470 blocks the compromised eMudhra intermediates.</div></td>
+          <td class="vuln">&lt; 158.0.1</td>
+          <td class="fix">158.0.1 · ESR 153.5.1 · ESR 115.43.1</td></tr>
+        <tr><td class="rank">13</td><td class="prod"><b>Fortinet</b><small>Network / security appliance</small></td>
+          <td class="cve">CVE-2025-61624</td>
+          <td><span class="st ex">Exploited</span><span class="st kev">KEV 16 Oct</span><div class="act">Path traversal.</div></td>
+          <td class="vuln">See Fortinet PSIRT</td>
+          <td class="fix">See Fortinet PSIRT</td></tr>
+        <tr><td class="rank">14</td><td class="prod"><b>Atlassian (multiple products)</b><small>Collaboration servers</small></td>
+          <td class="cve">CVE-2026-21589</td>
+          <td><span class="st ex">Exploited</span><span class="st kev">KEV 15 Oct</span><div class="act">Files accessible to external parties.</div></td>
+          <td class="vuln">See Atlassian advisory</td>
+          <td class="fix">See Atlassian advisory</td></tr>
+        <tr><td class="rank">15</td><td class="prod"><b>Palo Alto GlobalProtect (carry-over)</b><small>VPN. Exploited since May 2026.</small></td>
+          <td class="cve">CVE-2026-0257</td>
+          <td><span class="st ex">Exploited</span><span class="st kev">KEV 29 May</span></td>
+          <td class="vuln">PAN-OS 10.2 / 11.1 / 11.2 / 12.1 below the fixed hotfixes</td>
+          <td class="fix">12.1.4-h6 / 12.1.7 · 11.2.12 · 11.1.15 · 10.2.18-h6 (other h-builds in advisory)</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- P2 -->
+  <section class="tier" data-tier>
+    <div class="tier-head"><span class="badge b2">P2 · THIS SPRINT</span><h2>Libraries, frameworks, and lower-exposure KEV</h2></div>
+    <div class="tablebox"><table>
+      <thead><tr><th>#</th><th>Product / language</th><th>CVE</th><th>Status</th><th>Vulnerable</th><th>Patched (stable)</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">16</td><td class="prod"><b>Pillow (Python)</b><small>Image library</small></td>
+          <td class="cve">CVE-2026-112393<br>+ related TIFF CVEs</td>
+          <td><span class="st no">Important</span><div class="act">Heap overflow when saving TIFF to BytesIO.</div></td>
+          <td class="vuln">2.0.0 up to (not including) 13.0.0</td>
+          <td class="fix">13.0.0</td></tr>
+        <tr><td class="rank">17</td><td class="prod"><b>Next.js (JavaScript)</b><small>Released 14 Oct, just outside the week</small></td>
+          <td class="cve">2 critical RCEs</td>
+          <td><span class="st no">Critical</span><div class="act">Server Components caching; SVG processing on glibc.</div></td>
+          <td class="vuln">Below the fixed versions</td>
+          <td class="fix">16.4.1 · 15.5.28</td></tr>
+        <tr><td class="rank">18</td><td class="prod"><b>SiteGuard · Siemens Software Center</b><small>KEV 20 Oct</small></td>
+          <td class="cve">See CISA KEV</td>
+          <td><span class="st ex">Exploited</span><span class="st kev">KEV 20 Oct</span></td>
+          <td class="vuln">See vendor advisory</td>
+          <td class="fix">See vendor advisory<div class="act">Move to P0 if you run either.</div></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- P3 -->
+  <section class="tier" data-tier>
+    <div class="tier-head"><span class="badge b3">P3 · HYGIENE</span><h2>Secrets, phishing, and watch list</h2></div>
+    <div class="tablebox"><table>
+      <thead><tr><th>#</th><th>Item</th><th>Type</th><th>Status</th><th>Who is affected</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">19</td><td class="prod"><b>Railway</b><small>Cloud platform</small></td><td>Breach</td>
+          <td><span class="st ex">Confirmed</span><div class="act">Some environment variables were decrypted.</div></td>
+          <td>Any team deploying on Railway</td><td class="fix">Rotate all env vars and registry credentials; review logs</td></tr>
+        <tr><td class="rank">20</td><td class="prod"><b>Capcom ID · Comic Cmoa · Quest</b><small>Third-party breaches</small></td><td>Breach</td>
+          <td><span class="st no">Confirmed</span></td>
+          <td>Staff using these services</td><td class="fix">Warn staff about themed phishing; check password reuse</td></tr>
+        <tr><td class="rank">21</td><td class="prod"><b>PwC / Everest</b><small>Ransomware claim</small></td><td>Claim</td>
+          <td><span class="st no">Unverified</span></td>
+          <td>PwC clients and vendors</td><td class="fix">Watch for confirmation; be alert to PwC-themed lures</td></tr>
+      </tbody>
+    </table></div>
+    <p class="empty" id="nomatch" hidden>No items match that filter.</p>
+  </section>
+
+  <!-- Certificates -->
+  <section class="tier">
+    <div class="tier-head"><span class="badge b0">CERTIFICATES</span><h2>Recent certificate incidents and what to check</h2></div>
+    <div class="cert">
+      <div class="card">
+        <h3>eMudhra CA key compromise (Oct 2026)</h3>
+        <ul>
+          <li>Researchers recovered the private keys of <b>8 eMudhra intermediate CAs</b>. The keys were so weak they could be recovered almost instantly.</li>
+          <li>6 are TLS CAs: <code>EM DV TLS CA</code>, <code>EM OV TLS CA</code>, <code>EM EV TLS CA</code>, each G3B and G3C, under <code>emSign Root TLS CA - G3</code>.</li>
+          <li>2 are code-signing CAs: <code>EM OV CS CA - G3B</code>, <code>EM OV CS CA - G3C</code>, under <code>emSign Root CS CA - G3</code>.</li>
+          <li>Blocked by Chrome and Firefox (17 Oct), Apple (19 Oct) and Microsoft (20 Oct). Oracle shipped Java fix CVE-2026-91403.</li>
+          <li>eMudhra says none issued certificates. No exploitation is known, but anyone with the keys could have forged website or code-signing certificates.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>DigiCert code-signing theft (April 2026, background)</h3>
+        <ul>
+          <li>Attackers got into DigiCert's support systems through a malicious file and generated code-signing certificates.</li>
+          <li>Those certificates signed <b>Zhong Stealer</b> malware. DigiCert revoked 60 certificates.</li>
+          <li>Takeaway: a valid signature does not mean a file is safe. Check revocation, not just presence of a signature.</li>
+        </ul>
+        <p class="note">I found no other new certificate attacks this week. A rumor about GoDaddy mass revocation could not be confirmed.</p>
+      </div>
+      <div class="card wide">
+        <h3>What to check in your organization</h3>
+        <ol>
+          <li><b>Windows certificate stores.</b> Look for emSign / eMudhra intermediates. Windows applies Microsoft's revocation automatically, but servers with updates paused may not have it yet.</li>
+          <li><b>Software with its own CA bundle.</b> Java (<code>cacerts</code>), Python (<code>certifi</code>), Node.js, curl/OpenSSL bundles, Docker images and appliances often skip OS revocation. Update Java to the .0.2 builds and refresh <code>certifi</code> and CA bundles.</li>
+          <li><b>Your own certificates.</b> If any of your sites or apps use an eMudhra G3 certificate, replace it. eMudhra is reissuing about 30,000 customer certificates under a different root.</li>
+          <li><b>Signed executables.</b> Flag any file signed through <code>EM OV CS CA - G3B/G3C</code>. Treat it as suspicious.</li>
+          <li><b>Revocation checking.</b> Make sure proxies, EDR and TLS inspection devices check revocation (CRL/OCSP) and don't fail open.</li>
+          <li><b>Certificate inventory and expiry.</b> Keep a list of every certificate you own, who issued it and when it expires. Use Certificate Transparency monitoring (e.g. crt.sh) to spot certificates issued for your domains that you didn't request.</li>
+        </ol>
+      </div>
+      <div class="card wide">
+        <div class="codehead"><h3>Windows: find eMudhra certificates and signed files</h3><button class="copy" type="button" data-copy="ps1">Copy</button></div>
+<pre id="ps1"><code># 1. Certificate stores (machine + user): list anything from emSign / eMudhra
+Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\CA, Cert:\CurrentUser\Root, Cert:\CurrentUser\CA |
+  Where-Object { $_.Subject -match 'emSign|eMudhra|EM (DV|OV|EV) TLS CA|EM OV CS CA' -or $_.Issuer -match 'emSign|eMudhra' } |
+  Select-Object PSParentPath, Subject, Issuer, Thumbprint, NotAfter | Format-List
+
+# 2. Executables signed through the compromised code-signing CAs (adjust the path)
+Get-ChildItem 'C:\Program Files','C:\Program Files (x86)' -Recurse -Include *.exe,*.dll,*.msi -ErrorAction SilentlyContinue |
+  Get-AuthenticodeSignature -ErrorAction SilentlyContinue |
+  Where-Object { $_.SignerCertificate.Issuer -match 'EM OV CS CA' } |
+  Select-Object Path, Status, @{n='Issuer';e={$_.SignerCertificate.Issuer}}</code></pre>
+      </div>
+      <div class="card">
+        <div class="codehead"><h3>Linux / servers: check a site's chain</h3><button class="copy" type="button" data-copy="sh1">Copy</button></div>
+<pre id="sh1"><code># Show the issuer chain served by a host
+openssl s_client -connect example.com:443 -servername example.com -showcerts &lt;/dev/null 2&gt;/dev/null \
+  | grep -E 's:|i:'
+
+# Look for emSign in the system CA bundle
+grep -il emsign /etc/ssl/certs/* 2&gt;/dev/null</code></pre>
+      </div>
+      <div class="card">
+        <div class="codehead"><h3>Java: check the JDK trust store</h3><button class="copy" type="button" data-copy="sh2">Copy</button></div>
+<pre id="sh2"><code># Lists emSign entries in the JDK's cacerts
+keytool -list -v -cacerts -storepass changeit | grep -i -A2 emsign
+
+# Confirm the JDK build (want the .0.2 builds)
+java -version</code></pre>
+        <p class="note">A root entry alone is not proof of risk. The fix is the patched JDK, which distrusts the compromised intermediates.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Prepared 23 Oct 2026 from vendor advisories, CISA KEV and security reporting. Items marked "see advisory" were not checked for exact versions.</p>
+    <p>Key sources:
+      <a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">CISA KEV</a> ·
+      <a href="https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619" target="_blank" rel="noopener">PHP2Shell (Tanium)</a> ·
+      <a href="https://nodejs.org/en/blog/vulnerability/october-2026-security-releases" target="_blank" rel="noopener">Node.js</a> ·
+      <a href="https://www.oracle.com/security-alerts/cpuoct2026.html" target="_blank" rel="noopener">Oracle CPU</a> ·
+      <a href="https://www.openwall.com/lists/oss-security/2026/10/20/26" target="_blank" rel="noopener">Tomcat</a> ·
+      <a href="https://thehackernews.com/2026/10/critical-gitlab-flaw-cvss-100-could.html" target="_blank" rel="noopener">GitLab</a> ·
+      <a href="https://www.rapid7.com/blog/post/etr-cve-2026-102764-critical-beyondtrust-remote-support-authentication-bypass-exploited-in-the-wild/" target="_blank" rel="noopener">BeyondTrust</a> ·
+      <a href="https://www.scworld.com/brief/arista-networks-patches-actively-exploited-zero-day-vulnerability-in-velocloud-orchestrator" target="_blank" rel="noopener">Arista</a> ·
+      <a href="https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker.md" target="_blank" rel="noopener">LiteLLM</a> ·
+      <a href="https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnotes-security" target="_blank" rel="noopener">Edge</a> ·
+      <a href="https://www.mozilla.org/en-US/security/advisories/mfsa2026-111/" target="_blank" rel="noopener">Firefox</a> ·
+      <a href="https://thehackernews.com/2026/10/eight-emudhra-ca-keys-compromised.html" target="_blank" rel="noopener">eMudhra</a> ·
+      <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=2083449" target="_blank" rel="noopener">Mozilla eMudhra bug</a> ·
+      <a href="https://hackread.com/hackers-digicert-issue-certificates-sign-malware/" target="_blank" rel="noopener">DigiCert</a>
+    </p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var q=document.getElementById('q');
+  var tiers=[].slice.call(document.querySelectorAll('section[data-tier]'));
+  var none=document.getElementById('nomatch');
+  q.addEventListener('input',function(){
+    var t=q.value.trim().toLowerCase(), total=0;
+    tiers.forEach(function(s){
+      var shown=0;
+      s.querySelectorAll('tbody tr').forEach(function(r){
+        var m=!t||r.textContent.toLowerCase().indexOf(t)>-1;
+        r.hidden=!m; if(m)shown++;
+      });
+      s.hidden=shown===0; total+=shown;
+    });
+    if(total===0){none.hidden=false;none.parentElement.hidden=false;}else{none.hidden=true;}
+  });
+  document.querySelectorAll('.copy').forEach(function(b){
+    b.addEventListener('click',function(){
+      var el=document.getElementById(b.getAttribute('data-copy'));
+      var txt=el.textContent;
+      function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},1500);}
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt).then(done,function(){sel(el);});
+      } else sel(el);
+    });
+  });
+  function sel(el){var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);}
+})();
+</script>
+
+</body>
+</html>
