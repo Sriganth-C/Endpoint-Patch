@@ -138,7 +138,8 @@ function Find-UserEmudhra {
     foreach ($store in 'CA', 'Root') {
       $key = ''
       foreach ($l in (cmd /c "reg query `"HKU\$($p.Sid)\Software\Microsoft\SystemCertificates\$store\Certificates`" /s 2>nul")) {
-        if ("$l" -match '^HKEY_') { $key = "$l".Trim() }
+        # only a certificate key: exactly <store>\Certificates\<40-hex thumbprint> (key names come from the user's hive)
+        if ("$l" -match '^HKEY_') { $key = ''; $k = "$l".Trim(); if ($k -match ('^HKEY_USERS\\' + $p.Sid + '\\Software\\Microsoft\\SystemCertificates\\' + $store + '\\Certificates\\[0-9A-Fa-f]{40}$')) { $key = $k } }
         elseif ($key -and "$l" -match '^\s+Blob\s+REG_BINARY\s+([0-9A-Fa-f]+)') {
           $hex = $Matches[1].ToUpper(); foreach ($e in $EM_HEX) { if ($hex.Contains($e)) { $hits += , @{ Key = $key; User = $p.Name }; break } }
         }
@@ -864,8 +865,9 @@ function Remove-Emudhra {
   # the same certificates in the stores of other logged-on users
   foreach ($h in (Find-UserEmudhra)) {
     Log "Delete certificate of $($h.User): $($h.Key)"
-    cmd /c "reg delete `"$($h.Key)`" /f >> `"$logFile`" 2>&1"
-    if ($LASTEXITCODE -eq 0) { $n++ }
+    # PowerShell provider with a literal path: no command line is built from registry data
+    Remove-Item -LiteralPath ('Registry::' + $h.Key) -Recurse -Force
+    if (-not (Test-Path -LiteralPath ('Registry::' + $h.Key))) { $n++ }
   }
   return "Deleted $n compromised eMudhra certificate(s)."
 }
